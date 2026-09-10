@@ -48,6 +48,9 @@ class HuntPolicy:
         self.book = ChannelBook()
         self.waypoints = directional_waypoints() if directional else omni_waypoints()
         self.stuck: set[int] = set()
+        self.creep_calls = 0
+        self.creep_steps = 0
+        self.creep_attempted: set[int] = set()
 
     def run(self, do_enter: bool = True) -> dict:
         if do_enter:
@@ -76,6 +79,8 @@ class HuntPolicy:
             "virtual_time_s": vt,
             "avg_clear_s": avg,
             "channels": sorted(self.book.cleared),
+            "creep_calls": self.creep_calls,
+            "creep_steps": self.creep_steps,
         }
 
     def _scan_point(self, xy: Point, channels: list[int]) -> None:
@@ -185,6 +190,11 @@ class HuntPolicy:
         return False
 
     def _creep_clear(self, ch: int, start: Point, th: float) -> bool:
+        if not self.directional:
+            if ch in self.creep_attempted:
+                return False
+            self.creep_attempted.add(ch)
+        self.creep_calls += 1
         heading = th
         p = start
         last_good = start
@@ -198,6 +208,7 @@ class HuntPolicy:
             if key in seen:
                 break
             seen.add(key)
+            self.creep_steps += 1
             body = self.bot.measure(nxt[0], nxt[1], ch)
             if not _accepted(body):
                 break
@@ -225,6 +236,6 @@ class HuntPolicy:
         return self._try_clear(last_good, ch)
 
     def _home_and_clear(self, ch: int) -> None:
-        if ch in self.book.cleared:
+        if ch in self.book.cleared or not self.book.detections.get(ch):
             return
         self._localize_and_clear(ch)

@@ -1,0 +1,55 @@
+{
+  "question": "Q3",
+  "round": 1,
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "main_candidate",
+  "status": "PASS",
+  "inputs": {
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..99",
+    "random_source_count": "10..16",
+    "source_radius_m": "0..1800 uniform by area",
+    "effective_radius_m": "1000..1500",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "baseline": "results/Q3/experiments/round0/metrics/baseline_metrics.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/round1/metrics/candidate_metrics.json",
+    "code/Q3/reviews/q3_python_review.json",
+    "results/Q3/experiments/round1/logs/q4_regression_from_global_creep_guard.txt"
+  ],
+  "metric_summary": {
+    "unit_tests": "28/28 PASS",
+    "random_all_clear": "100/100",
+    "mean_virtual_time_s": 6293.903181991506,
+    "mean_virtual_time_change_pct": -28.84060714236565,
+    "mean_actions": 133.49,
+    "mean_actions_change_pct": -79.52199058094405,
+    "mean_direction_measurements": 32.39,
+    "mean_direction_change_pct": -93.9797777034311,
+    "mean_creep_calls": 0.0,
+    "mean_creep_steps": 0.0,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 7682.241290441296,
+    "boundary_virtual_time_change_pct": -29.013403321861375,
+    "boundary_actions": 159,
+    "boundary_direction_measurements": 40,
+    "boundary_creep_calls": 0
+  },
+  "seed": "0..99",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "本轮只完成 Q3 directional=False 的交会优先控制流与每频道一次、最多40步的 fallback 守门；尚未加入1.01度舍入余量、距离集合约束、调度、覆盖精简和真实时间守门。",
+    "Q4 共用 HuntPolicy，但本轮只确认其全清回归，不宣称 Q4 已完成交会优先优化。",
+    "一次错误地将 fallback 守门扩展到 Q4 导致 5/12 清除；失败日志已保留，最终实现已恢复 28/28。",
+    "本地 mock 证据不能替代官方演练或正式测试。"
+  ],
+  "fallback_trigger_state": "not_triggered_in_100_random_cases_or_boundary_case"
+}
