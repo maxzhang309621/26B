@@ -48,6 +48,9 @@ class HuntPolicy:
         self.book = ChannelBook()
         self.waypoints = directional_waypoints() if directional else omni_waypoints()
         self.stuck: set[int] = set()
+        self.creep_calls = 0
+        self.creep_steps = 0
+        self.creep_attempted: set[int] = set()
 
     def run(self, do_enter: bool = True) -> dict:
         if do_enter:
@@ -76,6 +79,8 @@ class HuntPolicy:
             "virtual_time_s": vt,
             "avg_clear_s": avg,
             "channels": sorted(self.book.cleared),
+            "creep_calls": self.creep_calls,
+            "creep_steps": self.creep_steps,
         }
 
     def _scan_point(self, xy: Point, channels: list[int]) -> None:
@@ -135,10 +140,12 @@ class HuntPolicy:
                     self._measure_obs(ch, s2, obs)
                 if ch in self.book.cleared:
                     return
+                # Fuse a successful second bearing before considering fallback.
+                if len(self.book.detections.get(ch, [])) >= 2:
+                    continue
                 last = self.book.detections.get(ch, obs)[-1]
-                if self._creep_clear(ch, last.xy, last.svd_deg):
-                    return
-                continue
+                self._creep_clear(ch, last.xy, last.svd_deg)
+                return
             stations = [d.xy for d in obs]
             bearings = [d.svd_deg for d in obs]
             region = intersect_cones(stations, bearings)
@@ -177,6 +184,11 @@ class HuntPolicy:
         return False
 
     def _creep_clear(self, ch: int, start: Point, th: float) -> bool:
+        if not self.directional:
+            if ch in self.creep_attempted:
+                return False
+            self.creep_attempted.add(ch)
+        self.creep_calls += 1
         heading = th
         p = start
         last_good = start
@@ -189,6 +201,7 @@ class HuntPolicy:
             if key in seen:
                 break
             seen.add(key)
+            self.creep_steps += 1
             body = self.bot.measure(nxt[0], nxt[1], ch)
             if not _accepted(body):
                 break
@@ -211,10 +224,6 @@ class HuntPolicy:
         return self._try_clear(last_good, ch)
 
     def _home_and_clear(self, ch: int) -> None:
-        obs = self.book.detections.get(ch, [])
-        if not obs:
+        if not self.book.detections.get(ch):
             return
-        last = obs[-1]
-        self._creep_clear(ch, last.xy, last.svd_deg)
-        if ch not in self.book.cleared:
-            self._localize_and_clear(ch)
+        self._localize_and_clear(ch)

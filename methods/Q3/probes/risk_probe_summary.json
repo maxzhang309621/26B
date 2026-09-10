@@ -1,0 +1,51 @@
+{
+  "question": "Q3",
+  "probe_id": "q3_preoptimization_probe_20260911",
+  "methods": {
+    "main_candidate": "M2_triangulation_first",
+    "usable_baseline": "M1_current_creep_first",
+    "conditional_fallback": "F1_bounded_creep"
+  },
+  "executability": {
+    "status": "PASS",
+    "evidence": "Python 3.12 下现有 26/26 单元测试通过；固定两站代表场景的角锥交非空且有界，最小包围圆半径 18.2182 m，小于 20 m 清除阈值。"
+  },
+  "data_coverage": {
+    "status": "CONDITIONAL",
+    "evidence": "同一固定套件已覆盖 100 个种子、10–16 个源、源位置完整扩展到 1800 m 圆盘、有效半径 1000–1500 m，并加入 16 源/r=1799 m/r_eff=1000 m 边界压力场景；±1 度加两位小数舍入与近共线专项仍留待第2步。"
+  },
+  "assumption_checks": {
+    "status": "CONDITIONAL",
+    "evidence": "中心加 8 个半径 1200 m 环点的最坏接收覆盖可成立，但当前 coverage_ok 仅为采样检查；角锥尚未计入两位小数舍入余量与距离约束。"
+  },
+  "output_degeneracy": {
+    "status": "PASS",
+    "evidence": "M2 在 100 个固定随机场景与 16 源边界场景中均未触发 creep；平均 direction 由 538.02 降至 32.39，边界场景由 672 降至 40，且全清率保持不变。退化夹具证明 Q3 同频道 fallback 最多执行 1 次、最多 40 步。",
+    "repair": "每次新方向观测后立即计算交会区域与最小包围圆，仅在退化或测量上限触发时进入有界 creep。"
+  },
+  "perturbation_sensitivity": {
+    "status": "CONDITIONAL",
+    "evidence": "已有少量随机种子可全清，但尚未系统覆盖 ±1 度误差边界、0/360 度环绕和接收半径 1000 m 下界。"
+  },
+  "scale_check": {
+    "status": "PASS",
+    "evidence": "同一 100 局下，M2 100/100 全清，平均虚拟时间 6293.9032 s、平均动作 133.49；相对 M1 分别下降 28.8406% 和 79.5220%。16 源边界场景 16/16 全清、7682.2413 s、159 动作。"
+  },
+  "verdict": "CONDITIONAL",
+  "fallback_trigger": "若交会区域为空、无界、数值退化，或达到定位测量上限仍未清除，则对该频道启用 F1_bounded_creep。",
+  "evidence_refs": [
+    "src/policy.py",
+    "src/geometry.py",
+    "src/tests/test_geometry.py",
+    "src/tests/test_q3.py",
+    "results/Q3/experiments/round0/metrics/baseline_metrics.json",
+    "docs/pipeline/00-state.md"
+  ],
+  "gate_interpretation": "第1步 G3 机械验收通过；总体风险探针仍为 CONDITIONAL，因为第2步物理可行域与舍入边界尚未完成。不得据此进入正式测试。",
+  "step1_evidence_refs": [
+    "results/Q3/experiments/round0/run_summary.json",
+    "results/Q3/experiments/round1/run_summary.json",
+    "code/Q3/reviews/q3_python_review.json",
+    "results/Q3/experiments/round1/logs/q4_regression_from_global_creep_guard.txt"
+  ]
+}

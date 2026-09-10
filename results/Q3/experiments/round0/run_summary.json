@@ -1,0 +1,41 @@
+{
+  "question": "Q3",
+  "round": 0,
+  "approved_methods": [
+    "M1_current_creep_first"
+  ],
+  "role": "usable_baseline",
+  "status": "PASS",
+  "inputs": {
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..99",
+    "random_source_count": "10..16",
+    "source_radius_m": "0..1800 uniform by area",
+    "effective_radius_m": "1000..1500",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m"
+  },
+  "outputs": [
+    "results/Q3/experiments/round0/metrics/baseline_metrics.json"
+  ],
+  "metric_summary": {
+    "unit_tests": "26/26 PASS",
+    "random_all_clear": "100/100",
+    "mean_virtual_time_s": 8844.79606871219,
+    "mean_actions": 651.87,
+    "mean_direction_measurements": 538.02,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 10822.101142943166,
+    "boundary_actions": 807,
+    "boundary_direction_measurements": 672
+  },
+  "seed": "0..99",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "旧基线没有 creep_calls/creep_steps 显式计数；方向测量数量可作为退化代理。"
+  ],
+  "fallback_trigger_state": "not_applicable_baseline"
+}
