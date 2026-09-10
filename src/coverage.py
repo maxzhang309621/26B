@@ -11,7 +11,7 @@ ARENA_R = 1800.0
 COVER_R = 1000.0
 OMNI_RING_R = 1200.0
 OMNI_RING_N = 8
-OUTER_RING_R = 2200.0
+OUTER_RING_R = 2100.0
 OUTER_RING_N = 16
 
 
@@ -28,12 +28,15 @@ def directional_waypoints(
     outer_r: float = OUTER_RING_R,
     outer_n: int = OUTER_RING_N,
 ) -> list[Point]:
+    """Inner omni cover plus one outer ring so outward 180° beams are audible.
+
+    A single 16-point ring at ~2100–2200 m keeps a listen point in front of an
+    edge source within 1000 m; extra 2000/2450 rings only added travel.
+    """
     pts = list(inner if inner is not None else omni_waypoints())
-    for i, (radius, n) in enumerate(((2000.0, 12), (outer_r, outer_n), (2450.0, 16))):
-        phase = 0.17 * i
-        for k in range(n):
-            a = 2.0 * math.pi * k / n + phase
-            pts.append((radius * math.cos(a), radius * math.sin(a)))
+    for k in range(outer_n):
+        a = 2.0 * math.pi * k / outer_n
+        pts.append((outer_r * math.cos(a), outer_r * math.sin(a)))
     return pts
 
 
