@@ -78,6 +78,26 @@ def candidate_region(s1: Point, theta_deg: float) -> list[list[Point]]:
     return [_rect_corners(s1, theta_deg, 1.0), _rect_corners(s1, theta_deg, -1.0)]
 
 
+def recommend_second_sides(
+    s1: Point,
+    theta_deg: float,
+    h: float = H_DEFAULT,
+) -> tuple[Point, Point]:
+    """Two orthogonal side points; clip to the arena disk."""
+    t_exit = ray_exit_t(s1, theta_deg, ARENA_R)
+    t_cap = min(1500.0, t_exit if t_exit > 0 else 1500.0)
+    rho = max(X_MIN, min(0.7 * t_cap, 0.5 * (X_MIN + min(X_MAX, t_cap))))
+    rho = min(max(rho, X_MIN), X_MAX)
+
+    def clip(p: Point) -> Point:
+        r = dist(p, (0.0, 0.0))
+        if r > ARENA_R:
+            return scale(p, ARENA_R / r)
+        return p
+
+    return clip(from_body(s1, theta_deg, rho, h)), clip(from_body(s1, theta_deg, rho, -h))
+
+
 def recommend_second(
     s1: Point,
     theta_deg: float,
