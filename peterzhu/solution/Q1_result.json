@@ -1,0 +1,14 @@
+{
+  "two_station_diameter_m": 21.9945,
+  "two_station_circle_covers": true,
+  "three_station_diameter_m": 19.2597,
+  "three_station_circle_covers": false,
+  "equilateral_triangle_circle_covers": false,
+  "conclusion": "以定位区域直径为直径的圆不一定能覆盖该区域；等边三角形为标准反例（外接圆直径=边长*2/√3>边长）。",
+  "algorithm": [
+    "各检测点示向度±1°构成误差扇形（楔形）",
+    "对所有站左右边界射线两两求交，保留落在全部扇形内的交点",
+    "对这些候选点求凸包得到定位多边形",
+    "直径=凸包顶点间最大欧氏距离（可用旋转卡壳优化）"
+  ]
+}
