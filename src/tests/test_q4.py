@@ -30,7 +30,7 @@ def _mix_sources(n: int, n_dir: int, rng: random.Random) -> list[Source]:
 
 class TestQ4Mock(unittest.TestCase):
     def test_outward_and_omni(self):
-        for seed, n, nd in ((3, 12, 4), (4, 10, 6)):
+        for seed, n, nd in ((3, 12, 4), (4, 10, 6), (0, 12, 6), (5, 16, 8)):
             rng = random.Random(seed)
             sources = _mix_sources(n, nd, rng)
             sim = MockSim(robot_id="team-test", sources=sources)

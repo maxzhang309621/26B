@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from geometry import Point, add, dist, intersect_cones, scale, smallest_enclosing_circle, sub, unit
-from candidate import recommend_second
+from candidate import recommend_second, recommend_second_sides
 from belief import ChannelBook
 from coverage import directional_waypoints, omni_waypoints
 from robot_client import RobotClient
@@ -115,13 +115,6 @@ class HuntPolicy:
                 self.stuck.add(ch)
 
     def _localize_and_clear(self, ch: int) -> None:
-        obs = self.book.detections.get(ch, [])
-        if not obs:
-            return
-        if self.directional:
-            last = obs[-1]
-            if self._creep_clear(ch, last.xy, last.svd_deg):
-                return
         for _ in range(MAX_FIX_MEASURES):
             if ch in self.book.cleared:
                 return
@@ -129,18 +122,19 @@ class HuntPolicy:
             if not obs:
                 return
             if len(obs) == 1:
-                s1, th = obs[0].xy, obs[0].svd_deg
-                s2 = recommend_second(s1, th, now=self.bot.position)
-                if dist(s2, s1) > 5.0:
-                    self._measure_obs(ch, s2, obs)
+                self._take_second_fix(ch, obs[0].xy, obs[0].svd_deg)
                 if ch in self.book.cleared:
                     return
-                last = self.book.detections.get(ch, obs)[-1]
-                if self._creep_clear(ch, last.xy, last.svd_deg):
+                obs = self.book.detections.get(ch, [])
+                if not obs:
                     return
-                continue
-            stations = [d.xy for d in obs]
-            bearings = [d.svd_deg for d in obs]
+                if len(obs) < 2:
+                    last = obs[-1]
+                    self._creep_clear(ch, last.xy, last.svd_deg)
+                    return
+            obs = self.book.detections.get(ch, [])
+            stations = [d.xy for d in obs[-4:]]
+            bearings = [d.svd_deg for d in obs[-4:]]
             region = intersect_cones(stations, bearings)
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
@@ -148,21 +142,35 @@ class HuntPolicy:
                     return
                 continue
             cen, rad = smallest_enclosing_circle(region.vertices)
-            if rad <= CLEAR_R and self._try_clear(cen, ch):
-                return
             if rad <= CLEAR_R:
-                for v in region.vertices:
-                    if self._try_clear(v, ch):
-                        return
+                if self._try_clear(cen, ch):
+                    return
+                last = obs[-1]
+                along = add(cen, scale(unit(last.svd_deg), 12.0))
+                if self._try_clear(along, ch):
+                    return
             nxt = _third_point(region.vertices, self.bot.position)
             if not self._measure_obs(ch, nxt, obs):
                 last = obs[-1]
                 self._creep_clear(ch, last.xy, last.svd_deg)
                 return
         obs = self.book.detections.get(ch, [])
-        if obs:
+        if obs and ch not in self.book.cleared:
             last = obs[-1]
             self._creep_clear(ch, last.xy, last.svd_deg)
+
+    def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
+        sides = list(recommend_second_sides(s1, th))
+        sides.sort(key=lambda p: dist(p, self.bot.position))
+        pref = recommend_second(s1, th, now=self.bot.position)
+        ordered = [pref] + [p for p in sides if dist(p, pref) > 5.0]
+        for s2 in ordered:
+            if dist(s2, s1) <= 5.0:
+                continue
+            if self._measure_obs(ch, s2, self.book.detections.get(ch, [])):
+                return
+            if not self.directional:
+                return
 
     def _measure_obs(self, ch: int, xy: Point, obs: list) -> bool:
         body = self.bot.measure(xy[0], xy[1], ch)
@@ -180,12 +188,13 @@ class HuntPolicy:
         heading = th
         p = start
         last_good = start
+        step = 180.0
         seen: set[tuple[int, int]] = set()
-        for _ in range(40):
+        for _ in range(16):
             if ch in self.book.cleared:
                 return True
-            nxt = add(p, scale(unit(heading), 12.0))
-            key = (round(nxt[0], 1), round(nxt[1], 1))
+            nxt = add(p, scale(unit(heading), step))
+            key = (round(nxt[0]), round(nxt[1]))
             if key in seen:
                 break
             seen.add(key)
@@ -200,21 +209,22 @@ class HuntPolicy:
                 heading = float(body["svd_deg"])
                 p = nxt
                 self.book.add_direction(ch, nxt, heading)
+                step = max(28.0, step * 0.65)
                 continue
-            back = add(nxt, scale(unit(heading), -16.0))
-            if self._try_clear(back, ch):
-                return True
             if self._try_clear(last_good, ch):
                 return True
-            closer = add(last_good, scale(unit(heading), 8.0))
-            return self._try_clear(closer, ch)
+            closer = add(last_good, scale(unit(heading), 14.0))
+            if self._try_clear(closer, ch):
+                return True
+            if step > 40.0:
+                step = 28.0
+                p = last_good
+                continue
+            back = add(nxt, scale(unit(heading), -18.0))
+            return self._try_clear(back, ch) or self._try_clear(last_good, ch)
         return self._try_clear(last_good, ch)
 
     def _home_and_clear(self, ch: int) -> None:
-        obs = self.book.detections.get(ch, [])
-        if not obs:
+        if ch in self.book.cleared:
             return
-        last = obs[-1]
-        self._creep_clear(ch, last.xy, last.svd_deg)
-        if ch not in self.book.cleared:
-            self._localize_and_clear(ch)
+        self._localize_and_clear(ch)
