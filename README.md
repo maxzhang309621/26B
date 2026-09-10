@@ -4,6 +4,8 @@
 
 远程仓库：<https://github.com/maxzhang309621/26B.git>
 
+`Peterzhu` 分支在 `peterzhu/` 下另有一份本地建模/视频策略副本，不覆盖本目录 `src/`。
+
 ## 目录
 
 | 路径 | 内容 |
