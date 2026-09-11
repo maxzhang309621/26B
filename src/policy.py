@@ -4,17 +4,25 @@ from __future__ import annotations
 
 from geometry import (
     Point,
+    Q3_ARENA_R,
     add,
     cross,
     dist,
     intersect_cones,
+    intersect_feasible_region,
     locate_quality,
     scale,
     smallest_enclosing_circle,
     sub,
     unit,
 )
-from candidate import next_stations
+from candidate import (
+    in_candidate_region,
+    next_stations,
+    recommend_second,
+    recommend_second_options,
+    recommend_second_sides_compact,
+)
 from belief import ChannelBook, Detection, R_RULE_OUT
 from coverage import ENROUTE_R, covering_phases, directional_waypoints, omni_waypoints
 from robot_client import RobotClient
@@ -168,6 +176,12 @@ class HuntPolicy:
         self.creep_calls = 0
         self.creep_steps = 0
         self.creep_attempted: set[int] = set()
+        self.route_rechecks = 0
+        self.route_recheck_hits = 0
+        self.deferred_channels: set[int] = set()
+        self.dedicated_localizations = 0
+        self.localization_services = 0
+        self.first_seen_order: dict[int, int] = {}
         self._tried_clear: set[tuple[int, int, int]] = set()
         self._clear_miss_n: dict[int, int] = {}
         self._uncharged_n: dict[int, int] = {}
@@ -201,13 +215,10 @@ class HuntPolicy:
             self._apply_target_n(ent)
         else:
             self._target_from_log()
-        origin, inner, outer = covering_phases(self.waypoints)
-        self._scan_point(origin, list(range(1, 21)))
-        self._cover_listens.append(origin)
-        self._drain_pending()
-        self._cover_tour(inner)
-        self._inner_done = True
-        self._cover_tour(outer)
+        if self.directional:
+            self._run_directional_cover()
+        else:
+            self._run_omni_q3_cover()
         if self.book.pending():
             self.stuck.clear()
             for ch in list(self.book.pending()):
@@ -224,8 +235,52 @@ class HuntPolicy:
             "channels": sorted(self.book.cleared),
             "creep_calls": self.creep_calls,
             "creep_steps": self.creep_steps,
+            "route_rechecks": self.route_rechecks,
+            "route_recheck_hits": self.route_recheck_hits,
+            "deferred_channels": len(self.deferred_channels),
+            "dedicated_localizations": self.dedicated_localizations,
+            "localization_services": self.localization_services,
             **extra,
         }
+
+    def _run_directional_cover(self) -> None:
+        """Q4: origin → inner NN → outer NN (with enroute / redundancy skips)."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        self._drain_pending()
+        self._cover_tour(inner)
+        self._inner_done = True
+        self._cover_tour(outer)
+
+    def _run_omni_q3_cover(self) -> None:
+        """Q3 round3 tour: fixed 8×1200 ring + opportunistic second looks + deferred drain."""
+        self._scan_point(self.waypoints[0], list(range(1, 21)))
+        self._drain_pending(self.waypoints[1:])
+        for index, wp in enumerate(self.waypoints[1:], start=1):
+            if self._done():
+                break
+            unknown = self.book.unknown_channels()
+            if not unknown and not self.book.pending():
+                break
+            opportunistic = self._opportunistic_channels(wp)
+            before_counts = {
+                ch: len(self.book.detections.get(ch, []))
+                for ch in opportunistic
+            }
+            channels = unknown + [ch for ch in opportunistic if ch not in unknown]
+            if channels:
+                self.route_rechecks += len(opportunistic)
+                self._scan_point(wp, channels)
+                self.route_recheck_hits += sum(
+                    ch in self.book.cleared
+                    or len(self.book.detections.get(ch, [])) > before_counts[ch]
+                    for ch in opportunistic
+                )
+            self._drain_pending(self.waypoints[index + 1 :])
+        if self.book.pending():
+            self.stuck.clear()
+            self._drain_pending([])
 
     def _done(self) -> bool:
         return len(self.book.cleared) >= self._target_n
@@ -286,7 +341,7 @@ class HuntPolicy:
     def _redundant_cover(self, xy: Point) -> bool:
         """Skip a listen that sits in another same-ring covering disk of radius min r_eff.
 
-        Inner (1200 m) must not suppress outer (~2100 m): radial gap is ~900 m < 1000 m,
+        Inner (1200 m) must not suppress outer (~1900 m): radial gap is ~700 m < 1000 m,
         but that disk overlap is isotropic and misses outward directional sources.
         """
         if not self._inner_done:
@@ -319,9 +374,16 @@ class HuntPolicy:
         self._cover_listens.append(mid)
         self._drain_pending()
 
+    def _record_direction(self, ch: int, xy: Point, svd: float) -> None:
+        if ch not in self.book.detections:
+            self.first_seen_order.setdefault(ch, len(self.first_seen_order))
+        self.book.add_direction(ch, xy, svd)
+
     def _scan_point(self, xy: Point, channels: list[int]) -> None:
         x, y = xy
         for ch in channels:
+            if self._done() or (self.directional and self._search_complete()):
+                break
             if ch in self.book.cleared:
                 continue
             body = self.bot.measure(x, y, ch)
@@ -332,7 +394,7 @@ class HuntPolicy:
             if kind == "near":
                 self._try_clear(xy, ch)
             elif kind == "direction":
-                self.book.add_direction(ch, xy, float(body["svd_deg"]))
+                self._record_direction(ch, xy, float(body["svd_deg"]))
                 self.stuck.discard(ch)
             else:
                 self.book.record_silence(ch, xy)
@@ -371,18 +433,111 @@ class HuntPolicy:
                 self._uncharged_n[ch] = self._uncharged_n.get(ch, 0) + 1
         return False
 
-    def _drain_pending(self) -> None:
+    def _drain_pending(self, future_waypoints: list[Point] | None = None) -> None:
+        future = [] if self.directional else list(future_waypoints or [])
         while True:
             pending = [c for c in self.book.pending() if c not in self.stuck]
             if not pending or len(self.book.cleared) >= self._target_n:
                 break
-            ch = min(
-                pending,
-                key=lambda c: dist(self.bot.position, self.book.detections[c][-1].xy),
-            )
+            if not self.directional:
+                ready: list[int] = []
+                for ch in pending:
+                    obs = self.book.detections.get(ch, [])
+                    if len(obs) == 1 and self._has_future_route_probe(ch, future):
+                        self.deferred_channels.add(ch)
+                        continue
+                    ready.append(ch)
+                if not ready:
+                    break
+                rejoin = future[0] if future else None
+                ch = min(
+                    ready,
+                    key=lambda c: (
+                        self._incremental_service_cost(c, rejoin),
+                        self.first_seen_order.get(c, c),
+                        c,
+                    ),
+                )
+                self.localization_services += 1
+                if len(self.book.detections.get(ch, [])) == 1:
+                    self.dedicated_localizations += 1
+            else:
+                ch = min(
+                    pending,
+                    key=lambda c: dist(self.bot.position, self.book.detections[c][-1].xy),
+                )
             self._localize_and_clear(ch)
             if ch not in self.book.cleared:
                 self.stuck.add(ch)
+
+    def _eligible_route_probe(self, ch: int, waypoint: Point) -> bool:
+        obs = self.book.detections.get(ch, [])
+        return (
+            not self.directional
+            and len(obs) == 1
+            and in_candidate_region(obs[0].xy, obs[0].svd_deg, waypoint)
+        )
+
+    def _has_future_route_probe(self, ch: int, future_waypoints: list[Point]) -> bool:
+        return any(self._eligible_route_probe(ch, wp) for wp in future_waypoints)
+
+    def _opportunistic_channels(self, waypoint: Point) -> list[int]:
+        return [
+            ch
+            for ch in self.book.pending()
+            if ch not in self.stuck and self._eligible_route_probe(ch, waypoint)
+        ]
+
+    def _estimated_service_point(self, ch: int) -> Point:
+        obs = self.book.detections.get(ch, [])
+        if not obs:
+            return self.bot.position
+        if len(obs) >= 2:
+            quality = locate_quality(
+                [d.xy for d in obs],
+                [d.svd_deg for d in obs],
+                silence=self.book.silent_at.get(ch),
+            )
+            if quality.sec_center is not None:
+                cen = quality.sec_center
+                radius = dist(cen, (0.0, 0.0))
+                if radius > Q3_ARENA_R:
+                    return scale(cen, (Q3_ARENA_R - 1e-6) / radius)
+                return cen
+            region = intersect_feasible_region(
+                [item.xy for item in obs],
+                [item.svd_deg for item in obs],
+            )
+            if not region.empty and region.vertices:
+                center, _ = smallest_enclosing_circle(region.vertices)
+                radius = dist(center, (0.0, 0.0))
+                if radius > Q3_ARENA_R:
+                    return scale(center, (Q3_ARENA_R - 1e-6) / radius)
+                return center
+        stations = next_stations(
+            obs[0].xy,
+            obs[0].svd_deg,
+            now=self.bot.position,
+            directional=False,
+            silence=self.book.silent_at.get(ch),
+        )
+        if stations:
+            return stations[0]
+        options = recommend_second_options(
+            obs[0].xy,
+            obs[0].svd_deg,
+            now=self.bot.position,
+        )
+        if options:
+            return options[0]
+        return obs[-1].xy
+
+    def _incremental_service_cost(self, ch: int, rejoin: Point | None) -> float:
+        service = self._estimated_service_point(ch)
+        cost = dist(self.bot.position, service)
+        if rejoin is not None:
+            cost += dist(service, rejoin) - dist(self.bot.position, rejoin)
+        return cost
 
     def _localize_and_clear(self, ch: int) -> None:
         for _ in range(MAX_FIX_MEASURES):
@@ -403,24 +558,45 @@ class HuntPolicy:
                     self._creep_clear(ch, last.xy, last.svd_deg)
                     return
             obs = self.book.detections.get(ch, [])
-            if self._try_bearing_clears(ch, obs):
-                return
             used = _diverse_obs(obs, 4)
             stations = [d.xy for d in used]
             bearings = [d.svd_deg for d in used]
-            quality = locate_quality(
-                stations,
-                bearings,
-                silence=self.book.silent_at.get(ch),
-            )
-            if quality.can_clear_20 and quality.sec_center is not None:
-                if self._try_clear(quality.sec_center, ch, charge=False):
+            if not self.directional:
+                # Q3: Q1 locate_quality first; skip near-collinear ray clears.
+                quality = locate_quality(
+                    stations,
+                    bearings,
+                    silence=self.book.silent_at.get(ch),
+                )
+                if quality.can_clear_20 and quality.sec_center is not None:
+                    if self._try_clear(quality.sec_center, ch, charge=False):
+                        return
+                    last = obs[-1]
+                    along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+                    if self._try_clear(along, ch, charge=False):
+                        return
+                if not quality.near_collinear and self._try_bearing_clears(ch, obs):
                     return
-                last = obs[-1]
-                along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
-                if self._try_clear(along, ch, charge=False):
+                region = (
+                    quality.region if not quality.region.empty else intersect_cones(stations, bearings)
+                )
+            else:
+                # Q4: keep prior order (bearing then quality).
+                if self._try_bearing_clears(ch, obs):
                     return
-            region = intersect_cones(stations, bearings)
+                quality = locate_quality(
+                    stations,
+                    bearings,
+                    silence=self.book.silent_at.get(ch),
+                )
+                if quality.can_clear_20 and quality.sec_center is not None:
+                    if self._try_clear(quality.sec_center, ch, charge=False):
+                        return
+                    last = obs[-1]
+                    along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+                    if self._try_clear(along, ch, charge=False):
+                        return
+                region = intersect_cones(stations, bearings)
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
                 if self._creep_clear(ch, last.xy, last.svd_deg):
@@ -456,24 +632,36 @@ class HuntPolicy:
         return False
 
     def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
-        from candidate import recommend_second, recommend_second_sides_compact
-
-        compact = list(recommend_second_sides_compact(s1, th))
-        compact.sort(key=lambda p: dist(p, self.bot.position))
-        ordered = compact
         if not self.directional:
-            pref = recommend_second(s1, th, now=self.bot.position)
-            ordered = [pref] + [p for p in compact if dist(p, pref) > 5.0]
-        extra = next_stations(
-            s1,
-            th,
-            now=self.bot.position,
-            directional=self.directional,
-            silence=self.book.silent_at.get(ch),
-        )
-        for p in extra:
-            if all(dist(p, q) > 5.0 for q in ordered):
-                ordered.append(p)
+            # Q3: Q2 next_stations primary, then legal recommend_second_options.
+            ordered = next_stations(
+                s1,
+                th,
+                now=self.bot.position,
+                directional=False,
+                silence=self.book.silent_at.get(ch),
+            )
+            for p in recommend_second_options(s1, th, now=self.bot.position):
+                if all(dist(p, q) > 5.0 for q in ordered):
+                    ordered.append(p)
+            if not ordered:
+                pref = recommend_second(s1, th, now=self.bot.position)
+                compact = list(recommend_second_sides_compact(s1, th))
+                ordered = [pref] + [p for p in compact if dist(p, pref) > 5.0]
+        else:
+            compact = list(recommend_second_sides_compact(s1, th))
+            compact.sort(key=lambda p: dist(p, self.bot.position))
+            ordered = compact
+            extra = next_stations(
+                s1,
+                th,
+                now=self.bot.position,
+                directional=True,
+                silence=self.book.silent_at.get(ch),
+            )
+            for p in extra:
+                if all(dist(p, q) > 5.0 for q in ordered):
+                    ordered.append(p)
         for s2 in ordered:
             if dist(s2, s1) <= 5.0:
                 continue
@@ -492,7 +680,7 @@ class HuntPolicy:
         if kind == "near":
             return self._try_clear(xy, ch)
         if kind == "direction":
-            self.book.add_direction(ch, xy, float(body["svd_deg"]))
+            self._record_direction(ch, xy, float(body["svd_deg"]))
             return True
         self.book.record_silence(ch, xy)
         if obs and self._try_clear(xy, ch, charge=False, behind_lobe=True):
@@ -530,7 +718,7 @@ class HuntPolicy:
                 last_good = nxt
                 heading = float(body["svd_deg"])
                 p = nxt
-                self.book.add_direction(ch, nxt, heading)
+                self._record_direction(ch, nxt, heading)
                 if self._try_bearing_clears(ch, self.book.detections.get(ch, [])):
                     return True
                 step = max(28.0, step * 0.65)
@@ -564,7 +752,7 @@ class HuntPolicy:
             if kind == "near":
                 return self._try_clear(p, ch)
             if kind == "direction":
-                self.book.add_direction(ch, p, float(body["svd_deg"]))
+                self._record_direction(ch, p, float(body["svd_deg"]))
                 if self._try_clear(p, ch):
                     return True
                 along = add(p, scale(unit(float(body["svd_deg"])), 12.0))

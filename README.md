@@ -4,6 +4,8 @@
 
 远程仓库：<https://github.com/maxzhang309621/26B.git>
 
+**官方演练对比基线（锁定）：** Q3 ≈ **5200 s**（`q3-round3-q12`，10/10）；Q4 = **`v_nofar` 覆盖航路 8508 s**（12×2100，10/10）。详见 [`output/baselines.md`](output/baselines.md)。
+
 ## 目录
 
 | 路径 | 内容 |
