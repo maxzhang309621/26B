@@ -16,6 +16,8 @@ from coverage import (
     q3_coverage_certificate,
     q3_waypoints,
     q3_worst_case_distance,
+    regular_ring_rho_interval,
+    regular_ring_search_time,
 )
 from q3_optimized_policy import HuntPolicy
 
@@ -120,6 +122,31 @@ class TestQ3Q4WaypointIsolation(unittest.TestCase):
         self.assertEqual(policy.waypoints, directional_waypoints())
         self.assertEqual(len(original_inner), 9)
         self.assertNotEqual(policy.waypoints[:7], q3_waypoints())
+
+
+class TestRegularRingSearchTime(unittest.TestCase):
+    def test_pentagon_cannot_cover(self):
+        self.assertIsNone(regular_ring_rho_interval(5))
+        self.assertFalse(regular_ring_search_time(5)["feasible"])
+
+    def test_hexagon_is_smallest_feasible_and_shortest_full_sweep(self):
+        lo, hi = regular_ring_rho_interval(6)
+        expected_lo = 1800.0 * math.cos(math.pi / 6.0) - math.sqrt(
+            COVER_R ** 2 - 1800.0 ** 2 * math.sin(math.pi / 6.0) ** 2
+        )
+        self.assertAlmostEqual(lo, expected_lo, places=9)
+        self.assertAlmostEqual(hi, 2.0 * COVER_R * math.cos(math.pi / 6.0), places=9)
+        times = [regular_ring_search_time(n) for n in range(6, 13)]
+        self.assertTrue(all(row["feasible"] for row in times))
+        best = min(times, key=lambda row: row["total_s"])
+        self.assertEqual(best["n"], 6)
+        hexagon = times[0]
+        heptagon = times[1]
+        self.assertLess(hexagon["total_s"], heptagon["total_s"])
+        self.assertAlmostEqual(hexagon["dwell_s"], 119.0 + 6 * 120.0, places=9)
+        self.assertTrue(
+            coverage_ok(omni_waypoints(ring_r=lo + 1e-6, n=6), cover_r=COVER_R)
+        )
 
 
 if __name__ == "__main__":

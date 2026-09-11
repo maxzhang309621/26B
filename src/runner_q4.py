@@ -34,7 +34,7 @@ def run_q4_pathopt(
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
 ) -> dict:
-    """Experimental Q4 path-time profile: sector-fused cover, deferred clear, greedy probes."""
+    """Experimental Q4: interleaved inner/outer cover, clear as soon as heard."""
     return HuntPolicy(
         bot,
         directional=True,

@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from policy import HuntPolicy
 from practice_guard import (
     FormalTestBlocked,
     assert_no_formal_files,
@@ -120,7 +119,9 @@ def run_hunt(
             q4_omni_n=q4_omni_n,
             q4_dir_n=q4_dir_n,
         )
-    return HuntPolicy(bot, directional=False, target_n=target_n).run(do_enter=False)
+    from runner_q3 import run_q3_batch
+
+    return run_q3_batch(bot, target_n=target_n, do_enter=False)
 
 
 def save_drill_log(

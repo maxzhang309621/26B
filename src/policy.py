@@ -40,7 +40,11 @@ from coverage import (
     covering_phases,
     directional_waypoints,
     omni_waypoints,
+    q3_waypoints,
+    open_path_channel_order,
+    open_path_cost,
     pick_q4_outer_ring,
+    sector_fused_order,
 )
 from robot_client import RobotClient
 
@@ -55,6 +59,10 @@ FAN_CLEAR_OFFSETS = (12.0, 18.0)
 MAX_CREEP_STEPS_DIR = 8
 DEFAULT_EXIT_RESERVE_S = 15.0
 MAX_ACTION_ATTEMPTS = 2
+# Receding-horizon open TSP (Q3 batch clear): execute a short prefix, replan.
+Q3_RH_STEP_M = 280.0
+Q3_RH_SWITCH_MARGIN_M = 50.0
+Q3_RH_MAX_ITERS = 480
 
 
 def _perp(p: Point) -> Point:
@@ -250,6 +258,7 @@ class HuntPolicy:
         q4_outer_mode: str | None = None,
         q4_path_profile: str = "v_nofar",
         q4_insert_delta_max_m: float = 400.0,
+        q3_path_profile: str = "defer",
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
             raise ValueError("exit_reserve_s must be a finite non-negative number")
@@ -278,7 +287,9 @@ class HuntPolicy:
         self.q4_outer_mode = q4_outer_mode
         self.q4_path_profile = q4_path_profile if q4_path_profile in ("v_nofar", "pathopt") else "v_nofar"
         self.q4_insert_delta_max_m = float(q4_insert_delta_max_m)
+        self.q3_path_profile = q3_path_profile if q3_path_profile in ("defer", "batch") else "defer"
         self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
+        self._q3_batch = bool(not directional and self.q3_path_profile == "batch")
         self._cover_phase = False
         self._pathopt_rejoin: Point | None = None
         self.q4_outer_r = Q4_OUTER_FULL_R
@@ -286,7 +297,7 @@ class HuntPolicy:
         self.waypoints = (
             directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
             if directional
-            else omni_waypoints()
+            else (q3_waypoints() if self._q3_batch else omni_waypoints())
         )
         self.stuck: set[int] = set()
         self.creep_calls = 0
@@ -314,6 +325,9 @@ class HuntPolicy:
         self._step8_executed_edges: set[int] = set()
         self._step8_edge_start = 0
         self._step8_insertions: list[dict[str, object]] = []
+        self.q3_rh_steps = 0
+        self.q3_rh_replans = 0
+        self.q3_rh_switches = 0
         self._set_target_n(target_n)
 
     def _set_target_n(self, n: int | None) -> None:
@@ -496,15 +510,24 @@ class HuntPolicy:
             self._target_from_log()
         if not self._guard_tripped():
             if self.directional:
-                self._run_directional_cover()
+                if self._pathopt:
+                    self._run_stagger_search_cover()
+                else:
+                    self._run_directional_cover()
             else:
-                self._run_omni_q3_cover()
+                if self._q3_batch:
+                    self._run_omni_q3_search_cover()
+                else:
+                    self._run_omni_q3_cover()
         if not self._guard_tripped() and self.book.pending():
             self.stuck.clear()
-            for ch in list(self.book.pending()):
-                if self._guard_tripped():
-                    break
-                self._home_and_clear(ch)
+            if self._q3_batch:
+                self._batch_clear_by_path()
+            else:
+                for ch in list(self.book.pending()):
+                    if self._guard_tripped():
+                        break
+                    self._home_and_clear(ch)
         pending_at_exit = len(self.book.pending())
         try:
             exit_body = self._exit_with_retry() if self._entered else {"accepted": False}
@@ -552,6 +575,16 @@ class HuntPolicy:
             "q4_outer_r": self.q4_outer_r if self.directional else None,
             "q4_outer_n": self.q4_outer_n if self.directional else None,
             "q4_path_profile": self.q4_path_profile if self.directional else None,
+            "q3_path_profile": None if self.directional else self.q3_path_profile,
+            "q3_ring_n": None if self.directional else max(0, len(self.waypoints) - 1),
+            "q3_ring_r": (
+                None
+                if self.directional or len(self.waypoints) < 2
+                else dist(self.waypoints[1], (0.0, 0.0))
+            ),
+            "q3_rh_steps": self.q3_rh_steps if self._q3_batch else 0,
+            "q3_rh_replans": self.q3_rh_replans if self._q3_batch else 0,
+            "q3_rh_switches": self.q3_rh_switches if self._q3_batch else 0,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -585,6 +618,229 @@ class HuntPolicy:
         self._pathopt_rejoin = None
         if not self._guard_tripped() and not self._done():
             self._route_completed = True
+
+    def _run_stagger_search_cover(self) -> None:
+        """Q4 pathopt: interleaved inner/outer listens; clear as soon as heard."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        rest = sector_fused_order([*inner, *outer])
+        self._cover_phase = True
+        self._inner_done = False
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        self._drain_pending()
+        for wp in rest:
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            leftover = [p for p in rest if dist(p, wp) > 1e-6]
+            self._pathopt_rejoin = (
+                min(leftover, key=lambda p: dist(wp, p)) if leftover else None
+            )
+            self._visit_cover_wp(wp)
+            self._refresh_stagger_inner_done(inner)
+        self._cover_phase = False
+        self._inner_done = True
+        self._pathopt_rejoin = None
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _refresh_stagger_inner_done(self, inner: list[Point]) -> None:
+        if not inner:
+            self._inner_done = True
+            return
+        unknown = self.book.unknown_channels()
+        self._inner_done = all(
+            any(dist(p, q) <= 8.0 for q in self._cover_listens) or not self._waypoint_useful(p, unknown)
+            for p in inner
+        )
+
+    def _run_omni_q3_search_cover(self) -> None:
+        """Q3 batch: visit every listen point first; clear only near-field hits."""
+        self._cover_phase = True
+        self._scan_point(self.waypoints[0], list(range(1, 21)))
+        self._cover_listens.append(self.waypoints[0])
+        for wp in self.waypoints[1:]:
+            if self._done() or self._guard_tripped():
+                break
+            unknown = self.book.unknown_channels()
+            opportunistic = self._opportunistic_channels(wp)
+            channels = []
+            for ch in self._channels_for(wp, unknown) + opportunistic:
+                if ch not in channels:
+                    channels.append(ch)
+            if not channels:
+                continue
+            self.route_rechecks += len(opportunistic)
+            before_counts = {
+                ch: len(self.book.detections.get(ch, [])) for ch in opportunistic
+            }
+            self._scan_point(wp, channels)
+            self._cover_listens.append(wp)
+            self.route_recheck_hits += sum(
+                ch in self.book.cleared
+                or len(self.book.detections.get(ch, [])) > before_counts[ch]
+                for ch in opportunistic
+            )
+        self._cover_phase = False
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _batch_clear_by_path(self) -> None:
+        """Receding-horizon open TSP: one move, then replan from the new pose."""
+        sticky: int | None = None
+        idle = 0
+        for _ in range(Q3_RH_MAX_ITERS):
+            if (
+                not self.book.pending()
+                or self._done()
+                or self._guard_tripped()
+            ):
+                break
+            ready = [c for c in self.book.pending() if c not in self.stuck]
+            if not ready:
+                break
+            self.q3_rh_replans += 1
+            opp = self._rh_standstill_opportunity()
+            if opp is not None:
+                ch = opp
+                if sticky is not None and sticky != ch:
+                    self.q3_rh_switches += 1
+                sticky = None
+            else:
+                ch = self._rh_pick_channel(sticky)
+                if ch is None:
+                    break
+                if sticky is not None and sticky != ch:
+                    self.q3_rh_switches += 1
+                sticky = ch
+            before_pos = self.bot.position
+            before_n = len(self.book.detections.get(ch, []))
+            before_cleared = ch in self.book.cleared
+            self.localization_services += 1
+            if before_n == 1:
+                self.dedicated_localizations += 1
+            self._rh_service_step(ch)
+            self.q3_rh_steps += 1
+            if ch in self.book.cleared:
+                sticky = None
+                idle = 0
+                continue
+            moved = dist(self.bot.position, before_pos) > 1.0
+            new_obs = len(self.book.detections.get(ch, [])) > before_n
+            if moved or new_obs or (ch in self.book.cleared) != before_cleared:
+                idle = 0
+            else:
+                idle += 1
+                self.stuck.add(ch)
+                sticky = None
+            if idle > max(3, len(ready)):
+                break
+
+    def _rh_ready_points(self) -> dict[int, Point]:
+        return {
+            ch: self._estimated_service_point(ch)
+            for ch in self.book.pending()
+            if ch not in self.stuck
+        }
+
+    def _rh_pick_channel(self, sticky: int | None) -> int | None:
+        """First city of the current-position open TSP, with switch hysteresis."""
+        pts = self._rh_ready_points()
+        if not pts:
+            return None
+        start = self.bot.position
+        order = open_path_channel_order(start, pts)
+        if not order:
+            return None
+        ch = order[0]
+        if sticky is None or sticky not in pts or sticky == ch:
+            return ch
+        rest = {c: pts[c] for c in pts if c != sticky}
+        tail = open_path_channel_order(pts[sticky], rest) if rest else []
+        keep_cost = dist(start, pts[sticky]) + open_path_cost(
+            pts[sticky], [pts[c] for c in tail]
+        )
+        tsp_cost = open_path_cost(start, [pts[c] for c in order])
+        if keep_cost <= tsp_cost + Q3_RH_SWITCH_MARGIN_M:
+            return sticky
+        return ch
+
+    def _rh_standstill_opportunity(self) -> int | None:
+        """Service a source that is already at the current pose before traveling."""
+        pos = self.bot.position
+        ready = [c for c in self.book.pending() if c not in self.stuck]
+        in_range: list[tuple[float, int]] = []
+        for ch in ready:
+            obs = self.book.detections.get(ch, [])
+            if len(obs) < 2:
+                continue
+            est = self._estimated_service_point(ch)
+            gap = dist(pos, est)
+            if gap <= CLEAR_R:
+                in_range.append((gap, ch))
+        if in_range:
+            return min(in_range)[1]
+        seconds: list[tuple[float, int]] = []
+        for ch in ready:
+            obs = self.book.detections.get(ch, [])
+            if len(obs) != 1:
+                continue
+            det = obs[0]
+            if in_candidate_region(det.xy, det.svd_deg, pos) and dist(pos, det.xy) > 8.0:
+                seconds.append((dist(pos, det.xy), ch))
+        if seconds:
+            return max(seconds)[1]
+        return None
+
+    @staticmethod
+    def _rh_step_len(gap: float) -> float:
+        if gap <= Q3_RH_STEP_M:
+            return gap
+        return min(Q3_RH_STEP_M, max(120.0, 0.5 * gap))
+
+    def _rh_service_step(self, ch: int) -> None:
+        """One protocol action toward the current estimated service point of ``ch``."""
+        if self._guard_tripped() or ch in self.book.cleared:
+            return
+        obs = self.book.detections.get(ch, [])
+        if not obs:
+            return
+        pos = self.bot.position
+        dest = self._estimated_service_point(ch)
+        gap = dist(pos, dest)
+        step = self._rh_step_len(gap)
+        if len(obs) == 1:
+            target = dest if gap <= step + 1e-6 else _lerp(pos, dest, step / max(gap, 1e-9))
+            self._measure_obs(ch, target, obs)
+            if ch in self.book.cleared:
+                return
+            if dist(self.bot.position, dest) <= 8.0:
+                self._try_clear(self.bot.position, ch, source="second_station")
+            return
+        used = _diverse_obs(obs, 4)
+        quality = locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+        )
+        if quality.can_clear_20 and quality.sec_center is not None:
+            if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
+                return
+            last = obs[-1]
+            along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+            self._try_clear(along, ch, charge=False, source="sec_along")
+            return
+        if not quality.near_collinear and self._try_bearing_clears(ch, obs):
+            return
+        if gap > step + 1e-6:
+            target = _lerp(pos, dest, step / gap)
+            self._measure_obs(ch, target, obs)
+            return
+        if self._measure_obs(ch, dest, obs):
+            return
+        if self._try_clear(dest, ch, source="measure_fallback"):
+            return
+        last = obs[-1]
+        self._creep_clear(ch, last.xy, last.svd_deg)
 
     def _run_omni_q3_cover(self) -> None:
         """Q3 round3 tour: fixed 8×1200 ring + opportunistic second looks + deferred drain."""
@@ -832,40 +1088,8 @@ class HuntPolicy:
             ]
             if not pending or len(self.book.cleared) >= self._target_n:
                 break
-            if self._pathopt and self._cover_phase:
-                here = self.bot.position
-                rejoin = self._pathopt_rejoin
-                listen = self._cover_listens[-1] if self._cover_listens else here
-                fresh = [
-                    c
-                    for c in pending
-                    if dist(self.book.detections[c][-1].xy, listen) <= 35.0
-                ]
-                cheap = [
-                    c
-                    for c in pending
-                    if self._incremental_service_cost(c, rejoin) <= self.q4_insert_delta_max_m
-                ]
-                pool: list[int] = []
-                for c in fresh + cheap:
-                    if c not in pool:
-                        pool.append(c)
-                if not pool:
-                    break
-                ch = min(
-                    pool,
-                    key=lambda c: (
-                        0 if c in fresh else 1,
-                        self._incremental_service_cost(c, rejoin),
-                        self.first_seen_order.get(c, c),
-                        c,
-                    ),
-                )
-                self.localization_services += 1
-                self._localize_and_clear(ch)
-                if ch not in self.book.cleared:
-                    self.stuck.add(ch)
-                continue
+            if self._q3_batch and self._cover_phase:
+                break
             if not self.directional:
                 ready: list[int] = []
                 for ch in pending:
@@ -1213,7 +1437,6 @@ class HuntPolicy:
         else:
             compact = list(recommend_second_sides_compact(s1, th))
             compact.sort(key=lambda p: dist(p, self.bot.position))
-            ordered = compact
             extra = next_stations(
                 s1,
                 th,
@@ -1221,6 +1444,7 @@ class HuntPolicy:
                 directional=True,
                 silence=self.book.silent_at.get(ch),
             )
+            ordered = compact
             for p in extra:
                 if all(dist(p, q) > 5.0 for q in ordered):
                     ordered.append(p)

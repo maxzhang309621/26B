@@ -94,4 +94,32 @@ python q1_cli.py
   - mock 24 种子：pathopt **miss=0**；均 VT **7561 vs 7769**（v_nofar）；均行驶 **6179 vs 6393**
 - 未做：官方演练对照；正式测试禁止。默认提交入口仍是 `run_q4()` = `v_nofar`。
 
+## 交错巡游 + 搜到即清对照（2026-09-11）
+
+- 按用户要求撤回「搜完再清」。`run_q4_pathopt()` 仅把听点序改为 `sector_fused_order`，每听点后仍 `_drain_pending()`，定位核与 `v_nofar` 相同。
+- 冒烟：`python -m unittest discover -s tests -q` → **95 passed**
+- mock-24：交错 **miss=0**，均 VT **8592** / 均行驶 **7150**；`v_nofar` 均 VT **7769** / 均行驶 **6393**
+- 结论：内外交错在搜到即清下**没有**优于双环最近邻，径向折返增加约 11% 行驶。默认入口不切换。
+
+## T25–T27 交错搜索 + 先搜后清（2026-09-11）
+
+- 文件：`src/policy.py`、`src/coverage.py`、`src/runner_q4.py`、`src/tests/test_q4.py`
+- **T25**：pathopt 覆盖走 `sector_fused_order`；除 `near` 外覆盖期不 `/clear`。
+- **T26**：覆盖结束后 `open_path_order` 按预测矩形代表点批量清除；交会过大时扇形补清，再专用第二站。
+- **T27**：`run_q4()` 仍为 v_nofar。
+- 冒烟：
+  - `python -m unittest discover -s tests -q` → **95 passed**
+  - mock-24：pathopt **miss=0**；均 VT **8578** / 均行驶 **6680**；对照 v_nofar 均 VT **7769** / 均行驶 **6393**（行驶未优于基线，默认入口不切换）
+- 未做：官方演练；正式测试禁止。
+- **已撤回**：用户改回搜到即清；上表仅作历史记录。当前 `run_q4_pathopt()` 见「交错巡游 + 搜到即清对照」。
+
+## T28–T29 问题 3 滚动时域清除（2026-09-11）
+
+- 文件：`src/coverage.py`、`src/policy.py`、`src/runner_q3.py`、`src/tests/test_q3.py`、`src/figures/fig_q3_path_gif.py`
+- **T28**：`_batch_clear_by_path` 改为每步 `open_path_channel_order` 重解；远第二站按 ~280 m 前缀 `/measure`；滞回 50 m。
+- **T29**：`run_q3()` 不变。GIF 对照现行 vs RH 批量。
+- 冒烟：`python -m unittest discover -s tests -q` → **101 passed**；mock-8 均 ΔVT −508 s（相对 `run_q3`）。
+- 未做：未改 `run_q3()` 默认入口；正式测试禁止。
+
+
 

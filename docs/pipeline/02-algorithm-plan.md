@@ -334,3 +334,68 @@
 | T24 | `run_q4_pathopt`；修好 benchmark 参数；mock 多种子对照 + 现有 `test_q4` 不回退 | T | `q4_benchmark.py` |
 
 实现顺序：T18 → T19 → T20 → T21 / T22（可并行）→ T23 → T24。T24 之前 T18–T22 的单测与现有 `test_q4`（`run_q4`）必须通过。
+
+## 变更 v1.4（交错搜索 + 开放最短路批量清除）
+
+依据用户指令与 `01-architecture.md` v1.4。`run_q4()` 保持 `v_nofar`。
+
+### 步骤 U：内外交错听点
+
+- 选定算法：**极角 Morse 扇区锯齿**（`sector_fused_order`）。听点集仍为 `q4_listen_set`（原点 + 8×900 + 8×1200 + 12×2100）。偶数扇区半径升序，奇数扇区半径降序。原点先全扫。
+- 选型理由：用户明确要求内外点交错，替代双环串行。v1.3 曾因漏清撤回锯齿；本变更用先搜后清 + 区域补清处理漏清，而不是改回双环。
+- 接口：`HuntPolicy._run_stagger_search_cover`；覆盖期 pathopt 不 `_drain_pending`。
+- 顺路第二看：`_q4_second_look_channels`（间距 80–1600 m、体坐标 `|y|≥200`、前瓣兼容）。**不用**带 `|P|≤1800` 裁剪的 `in_candidate_region`（否则 2100 m 外环点永远不合格）。
+
+### 步骤 V：预测区域开放最短路清除
+
+- 选定算法：对每个 pending 取预测点（两站且 `can_clear_20` 用包围圆心，否则 `recommend_second` 矩形代表点）→ `open_path_order`（Held–Karp n≤12，否则开放 NN+2-opt）从当前位置排序 → `_localize_and_clear` → 清一个再重解。
+- 若交会区 >20 m：先在圆心周围 24/36/48 m 及 36 m 八方向扇形补清；失败再从第一听点做专用第二站（pathopt 优先 `recommend_second` 靠近源，而不是折返覆盖听点旁的 compact 点）。
+- 接口：`HuntPolicy._batch_clear_by_path` / `_region_clear_point` / `_try_region_fan_clear`。
+
+| 任务 ID | 实现内容 | 关联步骤 |
+|---------|----------|----------|
+| T25 | `_run_stagger_search_cover` + 覆盖期不 drain；交错单测 | U |
+| T26 | `_batch_clear_by_path` + Held–Karp/2-opt；seed0 全清 | V |
+| T27 | mock-24 对照；`run_q4()` 回归不回退 | U,V |
+
+## 变更 v1.5（问题 3 滚动时域开放 TSP 清除）
+
+依据用户指令：每移动一步，按机器狗当前位置与已知源估计点重解最短开放路。`run_q3()` 保持现行延后清除。
+
+### 步骤 W：清除序动态重规划
+
+- 选定算法（首选）：**滚动时域开放 TSP（RH-OTSP）**。
+  1. 对每个 pending 信道，用当前位置重算估计服务点（单站 → `next_stations(now=·)`，两站 → 交会圆心）。
+  2. `open_path_channel_order`：n≤12 Held–Karp 开放路，否则 NN+2-opt。
+  3. 只执行第一条边的一个前缀（步长约 280 m，或到达则做一次定位/清除动作），然后用新位姿重解。
+  4. 滞回 50 m：当前目标仍接近最优则不切换，避免左右摆。
+  5. 若当前点已落入某源 20 m 或合法第二站，优先就地服务。
+- 选型理由：场地无障碍，几何最短路就是折线访问序；n≤16 可每步精确/近精确重解。Ma & Castañón（CDC 2006）把 Dubins TSP 做成滚动三航点；Pavone 等 DTRP 的 sRH 策略是「求剩余点 TSP，走一段再重算」。本问题没有最小转弯半径，因此把 Dubins 段换成欧氏开放 HK。协议没有空驶，前缀必须落在 `/measure` 或 `/clear` 上，远距离第二站的中途检测顺便更新示向。
+- 候选（按优先级，调试时依次）：
+  1. RH-OTSP + 前缀截断（本版采用）
+  2. 只在每次 `/measure`/`/clear` 后重解、不去截断（避免 5 s 中途检测）
+  3. 纯最近邻滚动（无剩余路代价，易交叉）
+  4. LKH / VNS 修补（n 太小，无必要依赖）
+- 参考资料：
+  - Ma, Castañón. *Receding Horizon Planning for Dubins Traveling Salesman Problems*. CDC 2006. https://doi.org/10.1109/cdc.2006.376928
+  - Pavone, Frazzoli, Bullo. *Decentralized Algorithms for Stochastic and Dynamic Vehicle Routing*. CDC 2007. https://stanfordasl.github.io/wp-content/papercite-data/pdf/Pavone.Frazzoli.ea.CDC07.pdf
+  - Psaraftis. *Dynamic vehicle routing problems*. Vehicle Routing: Methods and Studies, 1988.
+  - Held, Karp. *A dynamic programming approach to sequencing problems*. J. SIAM 1962.
+  - Gentilini, Sathiya, Pham. *RoboTSP*. arXiv:1709.09343. https://ar5iv.labs.arxiv.org/html/1709.09343
+- 接口约定：`open_path_channel_order(start, {ch: xy}) -> [ch…]`；`HuntPolicy._rh_pick_channel` / `_rh_service_step`；统计 `q3_rh_replans` / `q3_rh_steps` / `q3_rh_switches`。
+- 依赖：现有 `open_path_order`，无新库。
+
+## 候选尝试记录
+
+| 步骤 | 候选算法 | 状态 | 失败原因 |
+|------|----------|------|----------|
+| W | RH-OTSP + 前缀截断 | 采用 | — |
+| W | 清完一个再 HK | 被本版替换 | 锁定整段 `_localize_and_clear`，中途不能换目标 |
+| W | 纯最近邻 | 未试 | 作回退 |
+
+## 任务分配
+
+| 任务 ID | 实现内容 | 关联步骤 | 参考资料 |
+|---------|----------|----------|----------|
+| T28 | `open_path_channel_order` + RH 清除循环 + 单测截断/全清 | W | CDC 2006；Held–Karp |
+| T29 | mock 多种子对照 `run_q3` vs `run_q3_batch`；更新 GIF | W | `fig_q3_path_gif.py` |

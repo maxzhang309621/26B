@@ -193,7 +193,83 @@ class TestQ4Mock(unittest.TestCase):
         coarse_fail = directional_front_cover_ok(dense=True, n_radial=8, n_ang=72, n_headings=24)
         self.assertIsInstance(coarse_fail, bool)
 
-    def test_pathopt_defers_expensive_pending_during_cover(self):
+    def test_sector_fused_order_interleaves_radii(self):
+        fused = sector_fused_order(q4_listen_set())
+        _origin, inner_wps, outer_wps = covering_phases(q4_listen_set())
+        seen_inner: set[tuple[float, float]] = set()
+        interleaved = False
+        for p in fused:
+            if any(dist(p, w) < 8.0 for w in outer_wps):
+                if len(seen_inner) < len(inner_wps):
+                    interleaved = True
+                    break
+            else:
+                for w in inner_wps:
+                    if dist(p, w) < 8.0:
+                        seen_inner.add((round(w[0], 6), round(w[1], 6)))
+        self.assertTrue(interleaved)
+        path = open_path_order((0.0, 0.0), fused[:13])
+        self.assertEqual(len(path), 13)
+
+    def test_pathopt_interleaves_inner_outer(self):
+        rng = random.Random(11)
+        sources = _mix_sources(12, 12, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_pathopt(bot)
+        self.assertEqual(stats["cleared"], 12, msg=stats)
+        _origin, inner_wps, outer_wps = covering_phases(directional_waypoints())
+        seen_inner: set[tuple[float, float]] = set()
+        seen_outer_before_inner_done = False
+        for rec in bot.log:
+            if rec.get("path") != "/measure":
+                continue
+            body = rec.get("response") or {}
+            if body.get("accepted") is not True:
+                continue
+            p = rec["request"]["position"]
+            xy = (p["x"], p["y"])
+            if any(dist(xy, w) < 8.0 for w in outer_wps):
+                if len(seen_inner) < len(inner_wps):
+                    seen_outer_before_inner_done = True
+                    break
+            else:
+                for w in inner_wps:
+                    if dist(xy, w) < 8.0:
+                        seen_inner.add((round(w[0], 6), round(w[1], 6)))
+        self.assertTrue(seen_outer_before_inner_done)
+
+    def test_pathopt_clears_during_cover(self):
+        rng = random.Random(5)
+        sources = _mix_sources(14, 4, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_pathopt(bot)
+        self.assertEqual(stats["cleared"], 14)
+        cover = q4_listen_set()
+        last_cover_i = -1
+        first_off_clear_i = None
+        for i, rec in enumerate(bot.log):
+            path = rec.get("path")
+            if path not in ("/measure", "/clear"):
+                continue
+            body = rec.get("response") or {}
+            if body.get("accepted") is not True:
+                continue
+            req = rec.get("request") or {}
+            p = req.get("position")
+            if not p:
+                continue
+            xy = (p["x"], p["y"])
+            if path == "/measure" and any(dist(xy, w) < 8.0 for w in cover):
+                last_cover_i = i
+            elif path == "/clear" and body.get("clear_result") == "success":
+                if all(dist(xy, w) > 80.0 for w in cover) and first_off_clear_i is None:
+                    first_off_clear_i = i
+        if first_off_clear_i is not None and last_cover_i >= 0:
+            self.assertLess(first_off_clear_i, last_cover_i)
+
+    def test_pathopt_drains_pending_during_cover(self):
         class _Bot:
             position = (0.0, 0.0)
             virtual_time_s = 0.0
@@ -204,16 +280,24 @@ class TestQ4Mock(unittest.TestCase):
                 return {"accepted": True, "measure_result": "direction", "svd_deg": 180.0}
 
             def clear(self, x, y, channel):
-                return {"accepted": True, "clear_result": "no_target_in_range"}
+                self.position = (x, y)
+                return {"accepted": True, "clear_result": "success"}
 
         policy = HuntPolicy(_Bot(), directional=True, q4_path_profile="pathopt")
         policy._cover_phase = True
         policy._pathopt_rejoin = (2100.0, 0.0)
         policy.book.add_direction(1, (1800.0, 0.0), 180.0)
-        policy.q4_insert_delta_max_m = 1.0
-        before = list(policy.book.pending())
         policy._drain_pending()
-        self.assertEqual(policy.book.pending(), before)
+        self.assertNotIn(1, policy.book.pending())
+
+    def test_pathopt_benchmark_seed0_full_clear(self):
+        from q4_benchmark import _mix_sources as mix_seed
+
+        sources = mix_seed(0)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_pathopt(bot)
+        self.assertEqual(stats["cleared"], len(sources), msg=stats)
 
 
 if __name__ == "__main__":

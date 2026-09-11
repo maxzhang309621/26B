@@ -32,6 +32,8 @@ from practice_guard import (
 )
 
 _PS_LIST = r"""
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition(
@@ -55,6 +57,8 @@ foreach ($el in $all) {
 # formal-activation dialog is on screen. Exact name match only (never substring).
 _PS_CLICK = r"""
 param([Parameter(Mandatory=$true)][string]$ExactName)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition(

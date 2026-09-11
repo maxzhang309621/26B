@@ -11,9 +11,26 @@ def run_q3(
     *,
     enable_step8_clear_ready_insertion: bool = False,
 ) -> dict:
-    """Run Q3; Step 8 remains opt-in for paired development evaluation."""
+    """Official Q3: ring cover with opportunistic second looks and deferred clears."""
     return HuntPolicy(
         bot,
         directional=False,
         enable_step8_clear_ready_insertion=enable_step8_clear_ready_insertion,
     ).run()
+
+
+def run_q3_batch(
+    bot: RobotClient,
+    *,
+    target_n: int | None = None,
+    do_enter: bool = True,
+    enable_step8_clear_ready_insertion: bool = False,
+) -> dict:
+    """Selected Q3 practice scheme: hexagon cover, then receding-horizon batch clear."""
+    return HuntPolicy(
+        bot,
+        directional=False,
+        target_n=target_n,
+        q3_path_profile="batch",
+        enable_step8_clear_ready_insertion=enable_step8_clear_ready_insertion,
+    ).run(do_enter=do_enter)

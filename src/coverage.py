@@ -188,22 +188,36 @@ def sector_fused_order(waypoints: Sequence[Point], n_bins: int = OUTER_RING_N) -
     return out
 
 
+def open_path_cost(start: Point, order: Sequence[Point]) -> float:
+    """Length of an open path start → order[0] → … → order[-1]."""
+    return _path_length(start, order)
+
+
+def open_path_channel_order(start: Point, points: dict[int, Point]) -> list[int]:
+    """Open shortest-path visit order of labeled points from ``start``."""
+    if not points:
+        return []
+    channels = list(points)
+    ordered_pts = open_path_order(start, [points[c] for c in channels])
+    remaining = set(channels)
+    out: list[int] = []
+    for p in ordered_pts:
+        ch = min(remaining, key=lambda c: (dist(points[c], p), c))
+        remaining.remove(ch)
+        out.append(ch)
+    if remaining:
+        out.extend(sorted(remaining, key=lambda c: (dist(start, points[c]), c)))
+    return out
+
+
 def open_path_order(start: Point, pts: Sequence[Point]) -> list[Point]:
-    """Open Held–Karp path from start through pts (n≤12); NN fallback if larger."""
+    """Open Held–Karp path from start through pts (n≤12); NN+2-opt if larger."""
     pts = list(pts)
     n = len(pts)
     if n <= 1:
         return pts
     if n > 12:
-        remaining = set(range(n))
-        order: list[Point] = []
-        cur = start
-        while remaining:
-            j = min(remaining, key=lambda i: dist(cur, pts[i]))
-            remaining.remove(j)
-            order.append(pts[j])
-            cur = pts[j]
-        return order
+        return _open_nn_two_opt(start, pts)
     nodes = [start, *pts]
     m = n + 1
     inf = float("inf")
@@ -237,6 +251,42 @@ def open_path_order(start: Point, pts: Sequence[Point]) -> list[Point]:
         j = prev
     order_idx.reverse()
     return [nodes[i] for i in order_idx]
+
+
+def _path_length(start: Point, order: Sequence[Point]) -> float:
+    if not order:
+        return 0.0
+    total = dist(start, order[0])
+    for i in range(1, len(order)):
+        total += dist(order[i - 1], order[i])
+    return total
+
+
+def _open_nn_two_opt(start: Point, pts: Sequence[Point]) -> list[Point]:
+    remaining = set(range(len(pts)))
+    order: list[Point] = []
+    cur = start
+    while remaining:
+        j = min(remaining, key=lambda i: dist(cur, pts[i]))
+        remaining.remove(j)
+        order.append(pts[j])
+        cur = pts[j]
+    improved = True
+    while improved:
+        improved = False
+        best = _path_length(start, order)
+        for i in range(len(order) - 1):
+            for j in range(i + 1, len(order)):
+                cand = order[:i] + list(reversed(order[i : j + 1])) + order[j + 1 :]
+                length = _path_length(start, cand)
+                if length + 1e-9 < best:
+                    order = cand
+                    best = length
+                    improved = True
+                    break
+            if improved:
+                break
+    return order
 
 
 def coverage_ok(
@@ -368,4 +418,125 @@ def q3_coverage_certificate(
         "overall_worst_case_distance_m": overall_worst,
         "cover_radius_m": cover_r,
         "passes": structure_valid and coverage_valid,
+    }
+
+
+# Origin + regular n-gon listen tour (problem 3 coverage ring).
+DETECT_S = 5.0
+SWITCH_S = 1.0
+SPEED_MPS = 5.0
+N_CHANNELS = 20
+
+
+def regular_ring_rho_interval(
+    n: int,
+    arena_r: float = ARENA_R,
+    cover_r: float = COVER_R,
+) -> tuple[float, float] | None:
+    """Feasible circumradius interval for origin + regular n-gon covering the disk.
+
+    A point in the annulus [cover_r, arena_r] is farthest from both the origin and
+    the ring at an angular bisector. Convexity of squared distance in radius reduces
+    coverage to the two endpoints. The outer endpoint is coverable iff
+    ``arena_r * sin(π/n) ≤ cover_r`` (hence n≥6 for 1800/1000). Inner-gap coverage
+    requires ``ρ ≤ 2 cover_r cos(π/n)``.
+    """
+    if n < 3:
+        raise ValueError("n must be at least 3")
+    half = math.pi / n
+    cosine = math.cos(half)
+    sine = math.sin(half)
+    disc = cover_r * cover_r - arena_r * arena_r * sine * sine
+    if disc < 0.0:
+        return None
+    delta = math.sqrt(disc)
+    lo = arena_r * cosine - delta
+    hi = min(arena_r * cosine + delta, 2.0 * cover_r * cosine)
+    if lo > hi + 1e-9:
+        return None
+    return (max(0.0, lo), max(0.0, hi))
+
+
+def regular_ring_open_path_m(n: int, ring_r: float) -> float:
+    """Origin → n vertices in cyclic order, no return (search then clear)."""
+    side = 2.0 * ring_r * math.sin(math.pi / n)
+    return ring_r + (n - 1) * side
+
+
+def origin_full_sweep_s(
+    n_channels: int = N_CHANNELS,
+    detect_s: float = DETECT_S,
+    switch_s: float = SWITCH_S,
+) -> float:
+    """Dwell at origin after /enter (tuned to channel 1): first channel has no switch."""
+    if n_channels < 1:
+        return 0.0
+    return detect_s + (n_channels - 1) * (switch_s + detect_s)
+
+
+def ring_full_sweep_s(
+    n_channels: int = N_CHANNELS,
+    detect_s: float = DETECT_S,
+    switch_s: float = SWITCH_S,
+) -> float:
+    """Dwell at a later stop that must sweep every still-unknown channel.
+
+    Arriving from channel 20 to channel 1 pays a switch on the first measure.
+    """
+    return n_channels * (switch_s + detect_s)
+
+
+def regular_ring_search_time(
+    n: int,
+    ring_r: float | None = None,
+    *,
+    arena_r: float = ARENA_R,
+    cover_r: float = COVER_R,
+    speed_mps: float = SPEED_MPS,
+) -> dict[str, float | int | bool | None]:
+    """Coverage-tour virtual time: travel + origin 1–20 sweep + full sweep at each vertex.
+
+    ``ring_r=None`` selects the shortest feasible circumradius (travel is increasing
+    in ρ). Unused channels stay unknown, so a coverage guarantee still listens to
+    all 20 at every ring stop in the worst case.
+    """
+    interval = regular_ring_rho_interval(n, arena_r=arena_r, cover_r=cover_r)
+    if interval is None:
+        return {
+            "n": n,
+            "feasible": False,
+            "ring_r": None,
+            "rho_min": None,
+            "rho_max": None,
+            "path_m": None,
+            "travel_s": None,
+            "detect_s": None,
+            "switch_s": None,
+            "dwell_s": None,
+            "total_s": None,
+        }
+    lo, hi = interval
+    rho = lo if ring_r is None else float(ring_r)
+    feasible = lo - 1e-9 <= rho <= hi + 1e-9
+    path_m = regular_ring_open_path_m(n, rho)
+    travel_s = path_m / speed_mps
+    origin_detect = N_CHANNELS * DETECT_S
+    origin_switch = (N_CHANNELS - 1) * SWITCH_S
+    ring_detect = n * N_CHANNELS * DETECT_S
+    ring_switch = n * N_CHANNELS * SWITCH_S
+    detect_s = origin_detect + ring_detect
+    switch_s = origin_switch + ring_switch
+    dwell_s = origin_full_sweep_s() + n * ring_full_sweep_s()
+    return {
+        "n": n,
+        "feasible": feasible,
+        "ring_r": rho,
+        "rho_min": lo,
+        "rho_max": hi,
+        "path_m": path_m,
+        "travel_s": travel_s,
+        "detect_s": detect_s,
+        "switch_s": switch_s,
+        "dwell_s": dwell_s,
+        "total_s": travel_s + dwell_s,
     }
