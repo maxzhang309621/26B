@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 from coverage import omni_waypoints, q3_waypoints
 from mock_sim import MockSim, Source
 from robot_client import FnTransport, RobotClient
-from runner_q3 import run_q3, run_q3_batch
+from runner_q3 import run_q3_batch, run_q3_defer
 
 ARENA_R = 1800.0
 BLUE = "#2166AC"
@@ -400,7 +400,7 @@ def render_compare(
 
 def main() -> None:
     seed, n = 1, 12
-    sources_a, stats_a, frames_a = build_run(seed, n, run_q3, "defer")
+    sources_a, stats_a, frames_a = build_run(seed, n, run_q3_defer, "defer")
     sources_b, stats_b, frames_b = build_run(seed, n, run_q3_batch, "batch")
     if stats_a["cleared"] != n or stats_b["cleared"] != n:
         raise SystemExit(f"未全清 defer={stats_a['cleared']} batch={stats_b['cleared']}")
