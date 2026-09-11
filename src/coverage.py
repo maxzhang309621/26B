@@ -18,8 +18,37 @@ MID_RING_R = 900.0
 MID_RING_N = 0
 OUTER_RING_R = 2100.0
 OUTER_RING_N = 12
+Q4_OUTER_FULL_R = OUTER_RING_R
+Q4_OUTER_FULL_N = OUTER_RING_N
+Q4_OUTER_LITE_R = 1900.0
+Q4_OUTER_LITE_N = 11
+Q4_DIR_FULL_OUTER_MIN = 8
 ENROUTE_R = 900.0
 INNER_R_MAX = 1550.0  # origin / 1200 m ring / optional mid ring vs outer ring
+
+
+def pick_q4_outer_ring(
+    omni_n: int | None,
+    dir_n: int | None,
+    *,
+    jammer_count: int | None = None,
+    pure: bool = False,
+) -> tuple[float, int]:
+    """Pick outer ring after /enter (Q4-only; not Q3 route logic).
+
+    pure=False (v2):
+      - 0 directional → skip outer
+      - directional >= 8 → 12×2100
+      - else → 11×1900
+    pure=True: only dir>=6 full else lite (always keep outer ring).
+    """
+    if dir_n is None or omni_n is None:
+        return Q4_OUTER_FULL_R, Q4_OUTER_FULL_N
+    if not pure and dir_n <= 0:
+        return Q4_OUTER_LITE_R, 0
+    if dir_n >= Q4_DIR_FULL_OUTER_MIN:
+        return Q4_OUTER_FULL_R, Q4_OUTER_FULL_N
+    return Q4_OUTER_LITE_R, Q4_OUTER_LITE_N
 
 
 def omni_waypoints(ring_r: float = OMNI_RING_R, n: int = OMNI_RING_N) -> list[Point]:

@@ -80,3 +80,60 @@
 
 - 用户选择保留时间最短的 round3 中心加 8 环点路线并用于合并；六点候选（中心 + 半径 1150 m、相位 10°）及其解析覆盖证据保留在 round4，不作为当前 Q3 默认路线。
 - 当前实现：Q3 `directional=False` 使用 9 个航点；Q4 保持原路线。第 5 步仍需单独授权。
+
+## dev 合并与 Step 5 guard 移植记录（2026-09-11）
+
+- 按用户决定以 GitHub `dev` 分支为主：通过镜像拉取远程 `dev`（`cf9159f`），本地 `dev` 与 `integrate-q3-fastest` 均同步到该提交。
+- 远程 `dev` 已将 Q3 主循环并入 `src/policy.py`（`runner_q3.py` 改从 `policy` 导入），并引入 Q1 `locate_quality`（近共线检测、静默排除、20 m 清除判定）与 Q2 `next_stations`（交会角 60–120° 的第二站选择）。远程锁定官方演练基线：10 局 10/10 全清，平均 5245.36 s。
+- 按用户决定融合：把本地旧版 Step 5 工程 guard（`exit_reserve_s`、单调真实时钟、动作前 `_allow_action`、measure/clear 包装、终态原因与 `completed` 判定）移植进 `policy.HuntPolicy`；Q4 定向分支行为不变。
+- 验收：62/62 单元测试通过（`test_q3_step5.py` 已改为测试 `policy.HuntPolicy`）；本地 mock 80 局（seeds 0–79）+ 边界 16 源重跑，平均虚拟时间 `5156.596150225186 s` 与远程锁定基线逐位一致，全清、pending=0、非法动作=0、退出 accepted；guard 在正常路径上惰性，不改变数值。
+- 遗留：`src/q3_optimized_policy.py` 及其旧测试仍保留（旧版 Step 5 草稿已由移植取代），是否删除待用户决定。
+
+## 第 5 步机械验收（2026-09-11 完成）
+
+- 状态：PASS；目标不是提速，而是建立可指导优化的成本账本。
+- 工程底线：真实时间截止（`/enter` 的 `remaining_real_duration_s` − 15 s 预留）与动作前 guard 已在 `policy.HuntPolicy` 生效；measure/clear 最多重试 `MAX_ACTION_ATTEMPTS=2` 次，`/exit` 失败重试 2 次；终态只有 `cleared_max_16 / coverage_complete / coverage_short_circuit` 才算 `completed`，其余记录 `termination_reason` 与 `unknown_channels_at_exit`，不伪称全清。
+- 成本账本：`action_stats()` 扩展为 移动 `travel_s` / 检测 `detect_s`（5 s×次数）/ 换频 `switch_s`（1 s×频道变化）/ 成功清除 `clear_ok_s` / 失败清除 `clear_miss_s` / 每频道 `per_channel` 明细；归因约定为"每个动作的移动与驻留归属其目标频道"。
+- 验收：66/66 单元测试（新增 `test_q3_cost_ledger.py`：手工日志分解、真实 run 分解求和等于虚拟时间、重试与 exit 重试）；80 局基线逐位复现 `5156.596150225186 s`，边界 16/16，pending=0、非法动作=0、exit accepted。
+- 首份分解（80 局均值）：移动 `4427.86 s`（85.87%）、检测 `553.25 s`（10.73%）、换频 `108.81 s`（2.11%）、成功清除 `63.75 s`（1.24%）、失败清除 `2.93 s`（0.06%）；平均每局 clear miss `0.975` 次。
+- 结论：移动占比 85.87%，支撑"服务路径联合优化优先于静态结构搜索"的宏观判断。
+
+## 第 6 步机械验收（2026-09-11 完成）：主干/服务移动拆分 + paired 基建
+
+- 状态：PASS；策略行为不变（80 局虚拟时间逐位复现 `5156.596150225186 s`，paired 自检 80/80 全零 Δ），68/68 单元测试。
+- 移动四分类（`policy.HuntPolicy._move_decomposition`，80 局均值，占虚拟时间比）：
+  - `backbone_planned`（认证主干折线）`1463.82 s`（28.39%）
+  - `backbone_rejoin`（回接主干超出计划折线的部分，带符号）`286.03 s`（5.55%）
+  - `localization`（第二/三测站与爬行移动）`789.83 s`（15.32%）
+  - `clear_detour`（所有 /clear 动作的移动）`1888.18 s`（**36.62%，最大单桶**）
+- 每源均值：travel `349.77 s`、服务移动 `209.99 s`、clear 折返 `148.05 s`、定位移动 `61.94 s`、clear miss `0.075` 次、专程定位 `0.358` 次。
+- 操作定义：覆盖巡游扫描动作的移动记为主干扫描；非扫描测量记为定位移动；所有清除移动记为清除折返。主干扫描减计划折线得回接余量（符号化，保证五桶求和精确等于 travel_s）。
+- paired Δ 基建：`q3_benchmark --baseline <前次结果.json>` 输出同 seed 的 mean/median/P90/worst Δ 与更快占比（`paired_vs_baseline`），供 Step 8/9 成对比较直接使用。
+- 结论：清除折返 + 定位移动 + 回接余量合计约 `57.5%` 的总时间，纯主干仅 `28.4%`；**Step 8 的 clear-ready 跨边插入正是对准 clear_detour 这个最大桶**。
+
+## 第 7 步机械验收（2026-09-11 完成）：clear 旁路审计
+
+- 状态：PASS；69/69 单元测试；80 局虚拟时间逐位复现 `5156.596150225186 s`（打标签零行为影响）。
+- 实现：`_try_clear` 增加 `source` 标签与审计计数（attempts/success/miss/travel_s/miss_travel_s），`run()` 输出 `clear_audit`，benchmark 输出 `clear_audit_totals`。
+- 80 局审计结果（Q3 正常路径上仅两类清除动作）：
+  - `sec_center`（SEC 门槛路径）：393/393 成功，**成功率 100%**，移动 `44326 s`；`R_gate=20 m` 保持，无收紧证据。
+  - `bearing`（双线交点清除）：705 次，成功 627（88.94%），miss 78，移动 `106728 s`，miss 移动 `12797 s`；**承担 61.5% 的成功清除量**。
+  - 其余 15 类旁路（sec_along/scan_near/near_pos/behind_lobe/second_station/measure_fallback/creep_*/probe_*/fan）在 80 随机局中 **0 次触发**，属休眠兜底，未删除。
+- 边界 16 源：sec_center 8/8、bearing 8/8 全成。
+- 待决策：bearing 78 次 miss 的估算总成本约 `13000 s`（约 `163 s/局`，占 3.2%）。可选收紧方案：仅尝试落在保守可行域内的交点 / 仅试最优一个交点；需独立 seeds 验证后再定，不自动改。
+- 已实验并回滚：bearing 可行域 gate（Q3 only，交点须在保守可行域内且每次至多一试）。paired 80 局：miss −6.4%（78→73）但定位测量补偿增加，净 mean −1.48 s（−0.03%，噪声级），边界 +20.5 s 回退；用户决定回滚，Step 7 状态已逐位复现验证。gate 实验保留在 `step7b_bearing_gate` 作为反例证据。
+
+## 第 7 步正式验收与转段决定（2026-09-11）
+
+- 用户确认接受 Step 7 clear 旁路审计，拒绝 bearing gate，保留 Step 7 原策略，并授权完成 Step 7 后进入 Step 8。
+- 封口验证：Python 3.12 全套单元测试 69/69 PASS；Step 7c 回滚结果与 Step 7 基线在 80 局关键行为/时间字段及边界场景上均为零差异。
+- 证据边界：结论仅来自本地 mock；没有新增官方演练或正式测试证据；Step 8 此时仅获授权，尚未在本记录中实施或验收。
+
+## 第 8 步开发验收（2026-09-11 完成，不采用）
+
+- 候选：仅对 Q3 的 SEC clear-ready 点，按 `d(A,C)+d(C,B)-d(A,B)` 选择最便宜的未来未执行主干边插入；显式开关默认关闭，Q4 directional 分支强制禁用。
+- 开发集：独立 seeds `100..149`，基线与候选各 50 局成对运行；两者均 `50/50` 全清，pending=0、非法动作=0、退出全部 accepted，边界均 `16/16`。
+- 性能：候选相对基线成对均值 `+53.5613 s`（慢 `1.0576%`），中位 `+20.3152 s`，P90 `+249.5687 s`，最坏回退 `+448.1996 s`；仅 12/50 更快。
+- 机制解释：177 次插入全部成功且无 fallback，但平均 clear-detour 从 `1821.50 s` 增至 `1958.19 s`，超过 rejoin 与 localization 的节省；边界单例虽改善 `358.91 s`，不足以推翻独立开发集结论。
+- G8 结论：正确性通过，mean 与尾部门槛失败；Step 8 候选不采用，保持 Step 7 默认策略，不运行 locked 集，不进入 Step 9。
+- 证据边界：仅本地 mock；未运行官方演练、正式测试、路线切换、提交或推送。

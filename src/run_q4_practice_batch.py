@@ -18,6 +18,7 @@ from pathlib import Path
 
 from drill_io import (
     load_robot_id,
+    peek_practice_result_meta,
     run_hunt,
     save_drill_log,
     snapshot_files,
@@ -30,7 +31,14 @@ from practice_guard import (
     assert_no_formal_files,
     new_formal_files,
     parse_practice_jammer_count,
+    parse_practice_jammer_mix,
     reject_non_q4_practice_argv,
+)
+from practice_session import (
+    PracticeBusy,
+    claim_practice_api,
+    finish_round_api,
+    release_practice_lock,
 )
 from robot_client import HttpTransport, RobotClient
 from simulator_ui import (
@@ -44,8 +52,24 @@ LOCAL_DATA_DIR = Path(
     r"d:\index\数模\B题\模拟器\CUMCM2026B\Jammers-simulator-win64"
     r"\Jammers-simulator\JammersSimulatorData"
 )
-POST_CLICK_WAIT_S = 5.2
+POST_CLICK_WAIT_S = 8.0
 PROBLEM = 4
+POST_ENTER_SETTLE_S = 1.0
+INTER_ROUND_S = 4.0
+ERROR_COOLDOWN_S = 6.0
+
+
+def _probe_measure_ready(bot: RobotClient, tries: int = 16) -> None:
+    """After /enter, wait until /measure actually works (avoid 409 / reset flapping)."""
+    last: Exception | None = None
+    for i in range(tries):
+        try:
+            bot.measure(0.0, 0.0, 1)
+            return
+        except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+            last = exc
+            time.sleep(0.45 + 0.12 * i)
+    raise RuntimeError(f"enter 后 measure 未就绪: {last}")
 
 
 def _parse() -> argparse.Namespace:
@@ -94,29 +118,57 @@ def _guard_data(data_dir: Path, baseline: set[Path] | None = None) -> None:
 
 
 def _try_start_q4_practice() -> bool:
+    from practice_guard import normalize_label
+
     _guard_ui()
     try:
         if click_q4_practice_done_ack():
             print("已点掉「问题4演练测试完成」确认框（不是正式测试）")
-            time.sleep(0.6)
+            time.sleep(0.8)
     except FormalTestBlocked:
         raise
     except Exception:
         pass
     _guard_ui()
+    # Always try return first so we are on the lobby with the start button.
     try:
         click_return_practice()
-        time.sleep(0.6)
+        time.sleep(1.0)
     except FormalTestBlocked:
         raise
     except Exception:
         pass
+    want = normalize_label("开始问题4演练测试")
+    for _ in range(8):
+        _guard_ui()
+        labs = list_control_names()
+        if any(normalize_label(x) == want for x in labs):
+            break
+        try:
+            click_return_practice()
+        except Exception:
+            pass
+        time.sleep(0.8)
     _guard_ui()
     click_q4_practice_start()
     print(f"已点击「开始问题4演练测试」，等待 {POST_CLICK_WAIT_S:.0f} 秒倒计时…")
     time.sleep(POST_CLICK_WAIT_S)
     _guard_ui()
     return True
+
+
+def _dismiss_done() -> None:
+    for _ in range(12):
+        _guard_ui()
+        try:
+            if click_q4_practice_done_ack():
+                print("已点掉演练完成「确认」")
+                return
+        except FormalTestBlocked:
+            raise
+        except Exception:
+            return
+        time.sleep(0.4)
 
 
 def _one_round(
@@ -129,6 +181,8 @@ def _one_round(
     try_click: bool,
 ) -> dict:
     print(f"\n======== Q4 演练 {idx}/{total}  禁止正式测试 ========")
+    # Never click start while a previous session still holds :2026.
+    finish_round_api(url, robot_id, timeout_s=45.0)
     _guard_data(data_dir)
     baseline = snapshot_files(data_dir)
     clicked = False
@@ -155,11 +209,12 @@ def _one_round(
         ui_hook=_guard_ui,
     )
     _guard_data(data_dir, baseline)
-    time.sleep(0.3)
+    time.sleep(POST_ENTER_SETTLE_S)
     print(
         f"已进入 remaining_real_duration_s={ent.get('remaining_real_duration_s')} "
         f"等待 {time.time() - t0:.1f}s"
     )
+    _probe_measure_ready(bot)
     ui_n = None
     labels = list_control_names()
     assert_no_formal_activation(labels)
@@ -170,7 +225,24 @@ def _one_round(
         assert_no_formal_activation(labels)
         ui_n = parse_practice_jammer_count(labels, PROBLEM)
     print(f"演练窗源个数={ui_n if ui_n is not None else '未读到(按16)'}")
-    stats = run_hunt(str(PROBLEM), bot, target_n=ui_n)
+    ui_omni, ui_dir = parse_practice_jammer_mix(labels, PROBLEM)
+    case_meta = peek_practice_result_meta(data_dir, baseline, PROBLEM, timeout_s=4.0)
+    omni_n = ui_omni
+    dir_n = ui_dir
+    if case_meta:
+        omni_n = case_meta.get("omnidirectional_jammer_count", omni_n)
+        dir_n = case_meta.get("directional_jammer_count", dir_n)
+    if isinstance(omni_n, int) and isinstance(dir_n, int):
+        print(f"演练窗组成：全向 {omni_n} + 定向 {dir_n}（已记录；当前策略=v_nofar 固定 12×2100）")
+    else:
+        print("演练窗未读到全向/定向组成（当前策略=v_nofar 固定 12×2100）")
+    stats = run_hunt(
+        str(PROBLEM),
+        bot,
+        target_n=ui_n,
+        q4_omni_n=omni_n if isinstance(omni_n, int) else None,
+        q4_dir_n=dir_n if isinstance(dir_n, int) else None,
+    )
     _guard_data(data_dir, baseline)
     log_path = save_drill_log(
         str(PROBLEM), robot_id, stats, ent, bot.log, extra={"batch_index": idx, "mode": "practice"}
@@ -191,17 +263,12 @@ def _one_round(
             print(f"清除 {c}/{n}  正确率 {ratio:.1%}  虚拟时间 {stats.get('virtual_time_s'):.1f}s")
     print("stats:", json.dumps(stats, ensure_ascii=False))
     print("log:", log_path)
-    for _ in range(12):
-        _guard_ui()
-        try:
-            if click_q4_practice_done_ack():
-                print("已点掉演练完成「确认」")
-                break
-        except FormalTestBlocked:
-            raise
-        except Exception:
-            break
-        time.sleep(0.4)
+    try:
+        bot.exit()
+    except Exception:
+        pass
+    _dismiss_done()
+    finish_round_api(url, robot_id, timeout_s=60.0)
     return {
         "problem": PROBLEM,
         "mode": "practice",
@@ -226,6 +293,10 @@ def main() -> None:
     data_dir = args.data_dir
     summaries: list[dict] = []
     try:
+        try:
+            claim_practice_api("run_q4_practice_batch", args.url, robot_id)
+        except PracticeBusy as exc:
+            raise SystemExit(str(exc)) from exc
         _guard_ui()
         _guard_data(data_dir)
         for i in range(1, args.repeat + 1):
@@ -250,13 +321,22 @@ def main() -> None:
                     RobotClient(robot_id=robot_id, transport=HttpTransport(args.url)).exit()
                 except Exception:
                     pass
-                time.sleep(2.0)
+                try:
+                    _dismiss_done()
+                except FormalTestBlocked:
+                    raise
+                except Exception:
+                    pass
+                finish_round_api(args.url, robot_id, timeout_s=60.0)
+                time.sleep(ERROR_COOLDOWN_S)
             if i < args.repeat:
                 print("准备下一局问题4演练…")
-                time.sleep(1.5)
+                time.sleep(INTER_ROUND_S)
     except FormalTestBlocked as exc:
         print(exc)
         raise SystemExit(2) from exc
+    finally:
+        release_practice_lock()
 
     ratios = [s["ratio"] for s in summaries if s.get("ratio") is not None]
     times = [s["stats"]["virtual_time_s"] for s in summaries if s.get("stats")]

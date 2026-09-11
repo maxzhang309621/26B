@@ -1,6 +1,15 @@
-"""Search-localize-clear controller for problems 3 and 4."""
+"""Search-localize-clear controller for problems 3 and 4.
+
+Engineering guard: a monotonic real-time budget read from the /enter response
+and explicit terminal evidence.  When no deadline is armed and no action
+fails, the guard is inert and the normal Q3/Q4 path is unchanged.
+"""
 
 from __future__ import annotations
+
+import math
+import time
+from typing import Callable
 
 from geometry import (
     Point,
@@ -24,7 +33,15 @@ from candidate import (
     recommend_second_sides_compact,
 )
 from belief import ChannelBook, Detection, R_RULE_OUT
-from coverage import ENROUTE_R, covering_phases, directional_waypoints, omni_waypoints
+from coverage import (
+    ENROUTE_R,
+    Q4_OUTER_FULL_N,
+    Q4_OUTER_FULL_R,
+    covering_phases,
+    directional_waypoints,
+    omni_waypoints,
+    pick_q4_outer_ring,
+)
 from robot_client import RobotClient
 
 CLEAR_R = 20.0
@@ -36,6 +53,8 @@ MAX_CLEAR_MISS_PER_CH = 12
 MAX_UNCHARGED_CLEAR_PER_CH = 3
 FAN_CLEAR_OFFSETS = (12.0, 18.0)
 MAX_CREEP_STEPS_DIR = 8
+DEFAULT_EXIT_RESERVE_S = 15.0
+MAX_ACTION_ATTEMPTS = 2
 
 
 def _perp(p: Point) -> Point:
@@ -119,12 +138,40 @@ def _accepted(body: dict) -> bool:
 
 
 def action_stats(log: list[dict], speed_mps: float = SPEED_MPS) -> dict:
-    """Reconstruct travel / detect / clear-miss from a RobotClient action log."""
+    """Reconstruct travel / detect / switch / clear-ok / clear-miss from a RobotClient action log.
+
+    Attribution convention: each action's travel and dwell are attributed to
+    the action's target channel.  A measure dwell is detect time (5 s) plus
+    channel-switch time (1 s) when the tuned channel changed; a clear dwell is
+    success (5 s) or miss (3 s) time.  The tuned channel mirrors the
+    simulator: only /measure changes it.
+    """
     pos = (0.0, 0.0)
     travel_m = 0.0
     detect_s = 0.0
+    switch_s = 0.0
+    clear_ok_s = 0.0
+    clear_miss_s = 0.0
     n_measure = n_clear = clear_ok = clear_miss = 0
     last_vt = 0.0
+    tuned_channel = 1
+    per_channel: dict[int, dict[str, float | int]] = {}
+
+    def entry(ch: int) -> dict[str, float | int]:
+        return per_channel.setdefault(
+            ch,
+            {
+                "n_measure": 0,
+                "n_clear": 0,
+                "clear_ok": 0,
+                "clear_miss": 0,
+                "travel_s": 0.0,
+                "detect_s": 0.0,
+                "switch_s": 0.0,
+                "clear_s": 0.0,
+            },
+        )
+
     for rec in log:
         path = rec.get("path")
         if path not in ("/measure", "/clear"):
@@ -135,29 +182,54 @@ def action_stats(log: list[dict], speed_mps: float = SPEED_MPS) -> dict:
         req = rec.get("request") or {}
         p = req.get("position") or {}
         xy = (float(p["x"]), float(p["y"]))
+        ch = int(req.get("channel") or 0)
+        if ch < 1 or ch > 20:
+            continue
         d = dist(pos, xy)
+        travel = d / speed_mps
         travel_m += d
         pos = xy
         vt = float(body.get("virtual_time_s") or last_vt)
-        dwell = max(0.0, vt - last_vt - d / speed_mps)
+        dwell = max(0.0, vt - last_vt - travel)
         last_vt = vt
+        e = entry(ch)
+        e["travel_s"] += travel
         if path == "/measure":
+            sw = 1.0 if ch != tuned_channel else 0.0
+            tuned_channel = ch
+            detect = max(0.0, dwell - sw)
             n_measure += 1
-            detect_s += dwell
+            detect_s += detect
+            switch_s += sw
+            e["n_measure"] += 1
+            e["detect_s"] += detect
+            e["switch_s"] += sw
         else:
             n_clear += 1
+            e["n_clear"] += 1
             if body.get("clear_result") == "success":
                 clear_ok += 1
+                clear_ok_s += dwell
+                e["clear_ok"] += 1
             else:
                 clear_miss += 1
+                clear_miss_s += dwell
+                e["clear_miss"] += 1
+            e["clear_s"] += dwell
+    for e in per_channel.values():
+        e["total_s"] = e["travel_s"] + e["detect_s"] + e["switch_s"] + e["clear_s"]
     return {
         "travel_m": travel_m,
         "travel_s": travel_m / speed_mps,
         "detect_s": detect_s,
+        "switch_s": switch_s,
+        "clear_ok_s": clear_ok_s,
+        "clear_miss_s": clear_miss_s,
         "n_measure": n_measure,
         "n_clear": n_clear,
         "clear_ok": clear_ok,
         "clear_miss": clear_miss,
+        "per_channel": per_channel,
     }
 
 
@@ -167,11 +239,46 @@ class HuntPolicy:
         bot: RobotClient,
         directional: bool = False,
         target_n: int | None = None,
+        *,
+        exit_reserve_s: float = DEFAULT_EXIT_RESERVE_S,
+        monotonic_clock: Callable[[], float] | None = None,
+        enable_step8_clear_ready_insertion: bool = False,
+        q4_dynamic_outer: bool = False,
+        q4_profile: str = "dynamic_pure",
+        q4_enter_omni: int | None = None,
+        q4_enter_dir: int | None = None,
     ) -> None:
+        if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
+            raise ValueError("exit_reserve_s must be a finite non-negative number")
         self.bot = bot
         self.directional = directional
+        self.exit_reserve_s = float(exit_reserve_s)
+        self._clock = monotonic_clock or time.monotonic
+        # Step 8 is an opt-in Q3 candidate.  The runner keeps this disabled
+        # until a paired development/locked evaluation accepts the change.
+        self._step8_insertion_enabled = bool(
+            enable_step8_clear_ready_insertion and not directional
+        )
+        self._real_deadline_s: float | None = None
+        self._deadline_guard = False
+        self._action_failure = False
+        self._action_failure_detail: str | None = None
+        self._entered = False
+        self._route_completed = False
+        self._stopped_at_clear_limit = False
+        self._coverage_short_circuit = False
         self.book = ChannelBook()
-        self.waypoints = directional_waypoints() if directional else omni_waypoints()
+        self.q4_dynamic_outer = q4_dynamic_outer
+        self.q4_profile = q4_profile if q4_profile in ("v2", "dynamic_pure") else "v2"
+        self.q4_enter_omni = q4_enter_omni
+        self.q4_enter_dir = q4_enter_dir
+        self.q4_outer_r = Q4_OUTER_FULL_R
+        self.q4_outer_n = Q4_OUTER_FULL_N
+        self.waypoints = (
+            directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+            if directional
+            else omni_waypoints()
+        )
         self.stuck: set[int] = set()
         self.creep_calls = 0
         self.creep_steps = 0
@@ -189,6 +296,15 @@ class HuntPolicy:
         self._inner_done = False
         self._cover_listens: list[Point] = []
         self._target_n = MAX_TOTAL_CLEARED
+        self._move_context = "service"
+        self._move_segments: list[dict] = []
+        self._clear_audit: dict[str, dict[str, float]] = {}
+        self._step8_ready: dict[int, dict[str, object]] = {}
+        self._step8_rejected: set[int] = set()
+        self._step8_edges: list[tuple[int, Point, Point]] = []
+        self._step8_executed_edges: set[int] = set()
+        self._step8_edge_start = 0
+        self._step8_insertions: list[dict[str, object]] = []
         self._set_target_n(target_n)
 
     def _set_target_n(self, n: int | None) -> None:
@@ -199,6 +315,28 @@ class HuntPolicy:
         if not body:
             return
         self._set_target_n(body.get("jammer_count"))
+        self._apply_q4_outer(body)
+
+    def _apply_q4_outer(self, body: dict) -> None:
+        """v_nofar keeps 12x2100. Dynamic outer is opt-in (run_q4_v2 only)."""
+        if not self.directional or not self.q4_dynamic_outer:
+            return
+        omni = body.get("omnidirectional_jammer_count")
+        dir_n = body.get("directional_jammer_count")
+        if not isinstance(omni, int) and isinstance(self.q4_enter_omni, int):
+            omni = self.q4_enter_omni
+        if not isinstance(dir_n, int) and isinstance(self.q4_enter_dir, int):
+            dir_n = self.q4_enter_dir
+        self.q4_outer_r, self.q4_outer_n = pick_q4_outer_ring(
+            omni if isinstance(omni, int) else None,
+            dir_n if isinstance(dir_n, int) else None,
+            jammer_count=body.get("jammer_count"),
+            pure=self.q4_profile == "dynamic_pure",
+        )
+        self.waypoints = directional_waypoints(
+            outer_r=self.q4_outer_r,
+            outer_n=self.q4_outer_n,
+        )
 
     def _target_from_log(self) -> None:
         for rec in reversed(self.bot.log):
@@ -207,27 +345,191 @@ class HuntPolicy:
             self._apply_target_n(rec.get("response") or {})
             return
 
+    def _arm_real_deadline(self, enter_body: dict) -> None:
+        remaining = enter_body.get("remaining_real_duration_s")
+        if isinstance(remaining, (int, float)) and math.isfinite(float(remaining)):
+            self._real_deadline_s = self._clock() + max(
+                0.0, float(remaining) - self.exit_reserve_s
+            )
+            return
+        self._real_deadline_s = None
+
+    def _allow_action(self) -> bool:
+        if self._deadline_guard or self._action_failure:
+            return False
+        if self._real_deadline_s is not None and self._clock() >= self._real_deadline_s:
+            self._deadline_guard = True
+            return False
+        return True
+
+    def _guard_tripped(self) -> bool:
+        return self._deadline_guard or self._action_failure
+
+    def _measure_action(self, xy: Point, ch: int) -> dict:
+        start = self.bot.position
+        for attempt in range(MAX_ACTION_ATTEMPTS):
+            if not self._allow_action():
+                return {"accepted": False, "q3_guarded": True}
+            try:
+                body = self.bot.measure(xy[0], xy[1], ch)
+            except Exception as exc:  # preserve a terminal reason for the caller
+                if attempt + 1 >= MAX_ACTION_ATTEMPTS:
+                    self._action_failure = True
+                    self._action_failure_detail = f"measure: {exc}"
+                    return {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                self._record_move("measure", start, xy, ch)
+                return body
+        self._action_failure = True
+        self._action_failure_detail = "measure returned accepted=false after retries"
+        return {"accepted": False, "q3_action_error": "measure rejected"}
+
+    def _clear_action(self, xy: Point, ch: int) -> dict:
+        start = self.bot.position
+        for attempt in range(MAX_ACTION_ATTEMPTS):
+            if not self._allow_action():
+                return {"accepted": False, "q3_guarded": True}
+            try:
+                body = self.bot.clear(xy[0], xy[1], ch)
+            except Exception as exc:  # preserve a terminal reason for the caller
+                if attempt + 1 >= MAX_ACTION_ATTEMPTS:
+                    self._action_failure = True
+                    self._action_failure_detail = f"clear: {exc}"
+                    return {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                self._record_move("clear", start, xy, ch)
+                return body
+        self._action_failure = True
+        self._action_failure_detail = "clear returned accepted=false after retries"
+        return {"accepted": False, "q3_action_error": "clear rejected"}
+
+    def _record_move(self, kind: str, start: Point, xy: Point, ch: int) -> None:
+        travel_s = dist(start, xy) / SPEED_MPS
+        self._move_segments.append(
+            {
+                "kind": kind,
+                "context": self._move_context,
+                "travel_s": travel_s,
+                "xy": xy,
+                "ch": ch,
+            }
+        )
+
+    def _move_decomposition(self) -> dict:
+        """Split travel into backbone-scan / planned-leg / rejoin / localization / clear.
+
+        Q3 operational definition: a move issued by a cover-tour scan action
+        at a backbone waypoint is backbone-scan travel; every other measure
+        move is localization travel; every clear move is clear detour.  For
+        the fixed-order omni tour the planned polyline legs are subtracted
+        from backbone-scan travel and the remainder (signed) is the rejoin
+        cost.  The directional branch keeps the raw buckets.
+        """
+        backbone_scan_s = sum(
+            s["travel_s"] for s in self._move_segments
+            if s["kind"] == "measure" and s["context"] == "backbone"
+        )
+        localization_s = sum(
+            s["travel_s"] for s in self._move_segments
+            if s["kind"] == "measure" and s["context"] == "service"
+        )
+        clear_detour_s = sum(s["travel_s"] for s in self._move_segments if s["kind"] == "clear")
+        planned_s = 0.0
+        if not self.directional:
+            visited: list[Point] = []
+            for s in self._move_segments:
+                if s["kind"] != "measure" or s["context"] != "backbone":
+                    continue
+                for wp in self.waypoints:
+                    if dist(s["xy"], wp) <= 1e-6 and all(dist(wp, v) > 1e-6 for v in visited):
+                        visited.append(wp)
+                        break
+            planned_s = sum(
+                dist(visited[i - 1], visited[i]) for i in range(1, len(visited))
+            ) / SPEED_MPS
+        rejoin_s = backbone_scan_s - planned_s if not self.directional else 0.0
+        total = backbone_scan_s + localization_s + clear_detour_s
+        return {
+            "backbone_scan_s": backbone_scan_s,
+            "backbone_planned_s": planned_s,
+            "backbone_rejoin_s": rejoin_s,
+            "localization_s": localization_s,
+            "clear_detour_s": clear_detour_s,
+            "total_s": total,
+        }
+
+    def _exit_with_retry(self) -> dict:
+        last: dict = {"accepted": False}
+        for _ in range(MAX_ACTION_ATTEMPTS):
+            try:
+                body = self.bot.exit()
+            except Exception as exc:
+                last = {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                return body
+            last = body
+        return last
+
     def run(self, do_enter: bool = True) -> dict:
         if do_enter:
             ent = self.bot.enter()
             if not _accepted(ent):
                 raise RuntimeError(f"enter failed: {ent}")
+            self._entered = True
+            self._arm_real_deadline(ent)
             self._apply_target_n(ent)
         else:
+            self._entered = True
+            remaining = getattr(self.bot, "remaining_real_duration_s", None)
+            if isinstance(remaining, (int, float)) and math.isfinite(float(remaining)):
+                self._arm_real_deadline({"remaining_real_duration_s": remaining})
             self._target_from_log()
-        if self.directional:
-            self._run_directional_cover()
-        else:
-            self._run_omni_q3_cover()
-        if self.book.pending():
+        if not self._guard_tripped():
+            if self.directional:
+                self._run_directional_cover()
+            else:
+                self._run_omni_q3_cover()
+        if not self._guard_tripped() and self.book.pending():
             self.stuck.clear()
             for ch in list(self.book.pending()):
+                if self._guard_tripped():
+                    break
                 self._home_and_clear(ch)
-        self.bot.exit()
+        pending_at_exit = len(self.book.pending())
+        try:
+            exit_body = self._exit_with_retry() if self._entered else {"accepted": False}
+        except Exception as exc:
+            exit_body = {"accepted": False, "q3_action_error": str(exc)}
         n_clear = len(self.book.cleared)
         vt = self.bot.virtual_time_s
         avg = vt / n_clear if n_clear else float("inf")
         extra = action_stats(self.bot.log)
+        move_decomposition = self._move_decomposition()
+        if self._deadline_guard:
+            termination_reason = "deadline_guard"
+        elif self._action_failure:
+            termination_reason = "action_failure"
+        elif self._stopped_at_clear_limit:
+            termination_reason = "cleared_max_16"
+        elif self._route_completed and pending_at_exit == 0:
+            termination_reason = "coverage_complete"
+        elif self._coverage_short_circuit:
+            termination_reason = "coverage_short_circuit"
+        elif self._route_completed:
+            termination_reason = "route_completed_with_pending"
+        elif self._done() or not self.book.unknown_channels():
+            termination_reason = "coverage_complete"
+        else:
+            termination_reason = "incomplete"
+        exit_accepted = _accepted(exit_body)
+        completed = (
+            pending_at_exit == 0
+            and exit_accepted
+            and not self._guard_tripped()
+        )
         return {
             "cleared": n_clear,
             "virtual_time_s": vt,
@@ -240,6 +542,23 @@ class HuntPolicy:
             "deferred_channels": len(self.deferred_channels),
             "dedicated_localizations": self.dedicated_localizations,
             "localization_services": self.localization_services,
+            "q4_outer_r": self.q4_outer_r if self.directional else None,
+            "q4_outer_n": self.q4_outer_n if self.directional else None,
+            "pending_at_exit": pending_at_exit,
+            "exit_accepted": exit_accepted,
+            "termination_reason": termination_reason,
+            "completed": completed,
+            "route_completed": self._route_completed,
+            "stopped_at_clear_limit": self._stopped_at_clear_limit,
+            "deadline_guard": self._deadline_guard,
+            "action_failure": self._action_failure,
+            "action_failure_detail": self._action_failure_detail,
+            "unknown_channels_at_exit": self.book.unknown_channels(),
+            "move_decomposition": move_decomposition,
+            "clear_audit": self._clear_audit,
+            "step8_insertion_enabled": self._step8_insertion_enabled,
+            "step8_insertions": list(self._step8_insertions),
+            "step8_pending_ready": sorted(self._step8_ready),
             **extra,
         }
 
@@ -252,16 +571,27 @@ class HuntPolicy:
         self._cover_tour(inner)
         self._inner_done = True
         self._cover_tour(outer)
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
 
     def _run_omni_q3_cover(self) -> None:
         """Q3 round3 tour: fixed 8×1200 ring + opportunistic second looks + deferred drain."""
+        self._step8_prepare_route(self.waypoints)
+        self._step8_set_edge_start(0)
         self._scan_point(self.waypoints[0], list(range(1, 21)))
         self._drain_pending(self.waypoints[1:])
         for index, wp in enumerate(self.waypoints[1:], start=1):
             if self._done():
+                self._stopped_at_clear_limit = True
                 break
+            edge_index = index - 1
+            inserted = False
+            if self._step8_insertion_enabled:
+                self._step8_set_edge_start(edge_index)
+                inserted = self._step8_service_before_edge(edge_index)
             unknown = self.book.unknown_channels()
-            if not unknown and not self.book.pending():
+            if not unknown and not self.book.pending() and not inserted:
+                self._coverage_short_circuit = True
                 break
             opportunistic = self._opportunistic_channels(wp)
             before_counts = {
@@ -277,7 +607,18 @@ class HuntPolicy:
                     or len(self.book.detections.get(ch, [])) > before_counts[ch]
                     for ch in opportunistic
                 )
+            if self._step8_insertion_enabled:
+                # The waypoint remains part of the route even when an
+                # insertion was serviced immediately before this edge.
+                self._step8_mark_edge_executed(edge_index)
+                self._step8_set_edge_start(index)
+            if self._guard_tripped():
+                break
             self._drain_pending(self.waypoints[index + 1 :])
+            if self._guard_tripped():
+                break
+        else:
+            self._route_completed = True
         if self.book.pending():
             self.stuck.clear()
             self._drain_pending([])
@@ -310,7 +651,7 @@ class HuntPolicy:
     def _cover_nn(self, remaining: list[Point]) -> None:
         pending = set(remaining)
         ring = list(remaining)
-        while pending and not self._done() and not self._search_complete():
+        while pending and not self._done() and not self._search_complete() and not self._guard_tripped():
             unknown = self.book.unknown_channels()
             useful = [
                 wp
@@ -381,23 +722,30 @@ class HuntPolicy:
 
     def _scan_point(self, xy: Point, channels: list[int]) -> None:
         x, y = xy
-        for ch in channels:
-            if self._done() or (self.directional and self._search_complete()):
-                break
-            if ch in self.book.cleared:
-                continue
-            body = self.bot.measure(x, y, ch)
-            if not _accepted(body):
-                continue
-            self.book.record_scan(ch, xy)
-            kind = body.get("measure_result")
-            if kind == "near":
-                self._try_clear(xy, ch)
-            elif kind == "direction":
-                self._record_direction(ch, xy, float(body["svd_deg"]))
-                self.stuck.discard(ch)
-            else:
-                self.book.record_silence(ch, xy)
+        prev_context = self._move_context
+        self._move_context = "backbone"
+        try:
+            for ch in channels:
+                if self._done() or (self.directional and self._search_complete()):
+                    break
+                if ch in self.book.cleared:
+                    continue
+                body = self._measure_action((x, y), ch)
+                if not _accepted(body):
+                    if self._guard_tripped():
+                        break
+                    continue
+                self.book.record_scan(ch, xy)
+                kind = body.get("measure_result")
+                if kind == "near":
+                    self._try_clear(xy, ch, source="scan_near")
+                elif kind == "direction":
+                    self._record_direction(ch, xy, float(body["svd_deg"]))
+                    self.stuck.discard(ch)
+                else:
+                    self.book.record_silence(ch, xy)
+        finally:
+            self._move_context = prev_context
 
     def _clear_budget_left(self, ch: int) -> int:
         return MAX_CLEAR_MISS_PER_CH - self._clear_miss_n.get(ch, 0)
@@ -408,6 +756,7 @@ class HuntPolicy:
         ch: int,
         charge: bool = True,
         behind_lobe: bool = False,
+        source: str = "unknown",
     ) -> bool:
         if charge and self._clear_budget_left(ch) <= 0:
             return False
@@ -420,10 +769,32 @@ class HuntPolicy:
         if key in self._tried_clear:
             return False
         self._tried_clear.add(key)
-        body = self.bot.clear(xy[0], xy[1], ch)
-        if _accepted(body) and body.get("clear_result") == "success":
-            self.book.mark_cleared(ch)
-            return True
+        start = self.bot.position
+        body = self._clear_action(xy, ch)
+        accepted = _accepted(body)
+        if accepted:
+            ok = body.get("clear_result") == "success"
+            travel_s = dist(start, xy) / SPEED_MPS
+            audit = self._clear_audit.setdefault(
+                source,
+                {
+                    "attempts": 0,
+                    "success": 0,
+                    "miss": 0,
+                    "travel_s": 0.0,
+                    "miss_travel_s": 0.0,
+                },
+            )
+            audit["attempts"] += 1
+            audit["travel_s"] += travel_s
+            if ok:
+                audit["success"] += 1
+            else:
+                audit["miss"] += 1
+                audit["miss_travel_s"] += travel_s
+            if ok:
+                self.book.mark_cleared(ch)
+                return True
         if charge:
             self._clear_miss_n[ch] = self._clear_miss_n.get(ch, 0) + 1
         elif behind_lobe:
@@ -436,7 +807,13 @@ class HuntPolicy:
     def _drain_pending(self, future_waypoints: list[Point] | None = None) -> None:
         future = [] if self.directional else list(future_waypoints or [])
         while True:
-            pending = [c for c in self.book.pending() if c not in self.stuck]
+            if self._guard_tripped():
+                break
+            pending = [
+                c
+                for c in self.book.pending()
+                if c not in self.stuck and c not in self._step8_ready
+            ]
             if not pending or len(self.book.cleared) >= self._target_n:
                 break
             if not self.directional:
@@ -539,9 +916,141 @@ class HuntPolicy:
             cost += dist(service, rejoin) - dist(self.bot.position, rejoin)
         return cost
 
+    def _step8_prepare_route(self, route: list[Point]) -> None:
+        if not self._step8_insertion_enabled:
+            return
+        self._step8_edges = [
+            (index, route[index], route[index + 1])
+            for index in range(max(0, len(route) - 1))
+        ]
+        self._step8_executed_edges.clear()
+        self._step8_edge_start = 0
+
+    def _step8_set_edge_start(self, index: int) -> None:
+        if not self._step8_insertion_enabled:
+            return
+        self._step8_edge_start = max(0, min(index, len(self._step8_edges)))
+
+    def _step8_mark_edge_executed(self, index: int) -> None:
+        if self._step8_insertion_enabled and index == self._step8_edge_start:
+            self._step8_executed_edges.add(index)
+
+    @staticmethod
+    def _step8_insert_delta(a: Point, c: Point, b: Point) -> float:
+        """Extra path length for inserting C between an unexecuted A→B edge."""
+        return dist(a, c) + dist(c, b) - dist(a, b)
+
+    def _step8_future_edges(self) -> list[tuple[int, Point, Point]]:
+        if not self._step8_insertion_enabled:
+            return []
+        return [
+            edge
+            for edge in self._step8_edges
+            if edge[0] >= self._step8_edge_start
+            and edge[0] not in self._step8_executed_edges
+        ]
+
+    def _step8_choose_insertion_edge(
+        self,
+        clear_point: Point,
+        future_edges: list[tuple[int, Point, Point]] | None = None,
+    ) -> tuple[int, float] | None:
+        """Choose the cheapest still-future backbone edge for clear point C."""
+        if not self._step8_insertion_enabled:
+            return None
+        edges = future_edges if future_edges is not None else self._step8_future_edges()
+        candidates = [
+            (self._step8_insert_delta(a, clear_point, b), index)
+            for index, a, b in edges
+            if index >= self._step8_edge_start
+            and index not in self._step8_executed_edges
+        ]
+        if not candidates:
+            return None
+        delta, index = min(candidates, key=lambda item: (item[0], item[1]))
+        return index, delta
+
+    def _step8_clear_ready_point(self, quality: object) -> Point | None:
+        if not self._step8_insertion_enabled:
+            return None
+        if not getattr(quality, "can_clear_20", False):
+            return None
+        point = getattr(quality, "sec_center", None)
+        if point is None:
+            return None
+        if not all(math.isfinite(float(value)) for value in point):
+            return None
+        if dist(point, (0.0, 0.0)) > Q3_ARENA_R + 1e-6:
+            return None
+        return point
+
+    def _step8_queue_clear_ready(self, ch: int, clear_point: Point) -> bool:
+        if (
+            not self._step8_insertion_enabled
+            or ch in self.book.cleared
+            or ch in self._step8_rejected
+            or ch in self._step8_ready
+        ):
+            return False
+        choice = self._step8_choose_insertion_edge(clear_point)
+        if choice is None:
+            return False
+        edge_index, delta = choice
+        self._step8_ready[ch] = {
+            "point": clear_point,
+            "edge_index": edge_index,
+            "delta_m": delta,
+        }
+        self.stuck.discard(ch)
+        return True
+
+    def _step8_service_before_edge(self, edge_index: int) -> bool:
+        if not self._step8_insertion_enabled:
+            return False
+        ready = sorted(
+            (
+                ch,
+                item,
+            )
+            for ch, item in self._step8_ready.items()
+            if item.get("edge_index") == edge_index
+        )
+        inserted = False
+        for ch, item in ready:
+            point = item["point"]
+            if ch in self.book.cleared:
+                self._step8_ready.pop(ch, None)
+                continue
+            ok = self._try_clear(point, ch, charge=False, source="step8_insert")
+            if ok:
+                status = "success"
+                inserted = True
+            else:
+                # Do not lose a pending channel if a candidate point misses;
+                # release it to the existing baseline service path.
+                status = "fallback"
+                self._step8_rejected.add(ch)
+                self.stuck.discard(ch)
+                self._localize_and_clear(ch)
+            self._step8_ready.pop(ch, None)
+            self._step8_insertions.append(
+                {
+                    "channel": ch,
+                    "edge_index": edge_index,
+                    "point": point,
+                    "delta_m": item["delta_m"],
+                    "status": status,
+                }
+            )
+        return inserted
+
     def _localize_and_clear(self, ch: int) -> None:
         for _ in range(MAX_FIX_MEASURES):
+            if self._guard_tripped():
+                return
             if ch in self.book.cleared:
+                return
+            if ch in self._step8_ready:
                 return
             obs = self.book.detections.get(ch, [])
             if not obs:
@@ -568,12 +1077,15 @@ class HuntPolicy:
                     bearings,
                     silence=self.book.silent_at.get(ch),
                 )
+                clear_ready = self._step8_clear_ready_point(quality)
+                if clear_ready is not None and self._step8_queue_clear_ready(ch, clear_ready):
+                    return
                 if quality.can_clear_20 and quality.sec_center is not None:
-                    if self._try_clear(quality.sec_center, ch, charge=False):
+                    if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
                         return
                     last = obs[-1]
                     along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
-                    if self._try_clear(along, ch, charge=False):
+                    if self._try_clear(along, ch, charge=False, source="sec_along"):
                         return
                 if not quality.near_collinear and self._try_bearing_clears(ch, obs):
                     return
@@ -590,11 +1102,11 @@ class HuntPolicy:
                     silence=self.book.silent_at.get(ch),
                 )
                 if quality.can_clear_20 and quality.sec_center is not None:
-                    if self._try_clear(quality.sec_center, ch, charge=False):
+                    if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
                         return
                     last = obs[-1]
                     along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
-                    if self._try_clear(along, ch, charge=False):
+                    if self._try_clear(along, ch, charge=False, source="sec_along"):
                         return
                 region = intersect_cones(stations, bearings)
             if region.empty or not region.bounded or len(region.vertices) < 2:
@@ -604,16 +1116,16 @@ class HuntPolicy:
                 continue
             cen, rad = smallest_enclosing_circle(region.vertices)
             if rad <= CLEAR_R:
-                if self._try_clear(cen, ch, charge=False):
+                if self._try_clear(cen, ch, charge=False, source="sec_center"):
                     return
                 last = obs[-1]
                 along = add(cen, scale(unit(last.svd_deg), 12.0))
-                if self._try_clear(along, ch, charge=False):
+                if self._try_clear(along, ch, charge=False, source="sec_along"):
                     return
             nxt = cen if dist(cen, self.bot.position) >= 8.0 else _third_point(region.vertices, self.bot.position)
             if self._measure_obs(ch, nxt, obs):
                 continue
-            if self._try_clear(nxt, ch):
+            if self._try_clear(nxt, ch, source="measure_fallback"):
                 return
             last = obs[-1]
             self._creep_clear(ch, last.xy, last.svd_deg)
@@ -627,7 +1139,7 @@ class HuntPolicy:
 
     def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
         for q in _best_fixes(obs):
-            if self._try_clear(q, ch, charge=False):
+            if self._try_clear(q, ch, charge=False, source="bearing"):
                 return True
         return False
 
@@ -667,23 +1179,23 @@ class HuntPolicy:
                 continue
             if self._measure_obs(ch, s2, self.book.detections.get(ch, [])):
                 return
-            if self._try_clear(s2, ch):
+            if self._try_clear(s2, ch, source="second_station"):
                 return
             if not self.directional:
                 return
 
     def _measure_obs(self, ch: int, xy: Point, obs: list) -> bool:
-        body = self.bot.measure(xy[0], xy[1], ch)
+        body = self._measure_action(xy, ch)
         if not _accepted(body):
             return False
         kind = body.get("measure_result")
         if kind == "near":
-            return self._try_clear(xy, ch)
+            return self._try_clear(xy, ch, source="near_pos")
         if kind == "direction":
             self._record_direction(ch, xy, float(body["svd_deg"]))
             return True
         self.book.record_silence(ch, xy)
-        if obs and self._try_clear(xy, ch, charge=False, behind_lobe=True):
+        if obs and self._try_clear(xy, ch, charge=False, behind_lobe=True, source="behind_lobe"):
             return True
         return False
 
@@ -708,12 +1220,12 @@ class HuntPolicy:
                 break
             seen.add(key)
             self.creep_steps += 1
-            body = self.bot.measure(nxt[0], nxt[1], ch)
+            body = self._measure_action(nxt, ch)
             if not _accepted(body):
                 break
             kind = body.get("measure_result")
             if kind == "near":
-                return self._try_clear(nxt, ch)
+                return self._try_clear(nxt, ch, source="creep_near")
             if kind == "direction":
                 last_good = nxt
                 heading = float(body["svd_deg"])
@@ -724,39 +1236,39 @@ class HuntPolicy:
                 step = max(28.0, step * 0.65)
                 continue
             # no_signal: may be just behind a directional lobe but still <20 m
-            if self._try_clear(nxt, ch, charge=False, behind_lobe=True):
+            if self._try_clear(nxt, ch, charge=False, behind_lobe=True, source="creep_behind_lobe"):
                 return True
             if step <= 80.0 and self._clear_budget_left(ch) >= 3 and self._probe_segment(ch, last_good, nxt, heading):
                 return True
-            if self._try_clear(last_good, ch):
+            if self._try_clear(last_good, ch, source="creep_last"):
                 return True
             closer = add(last_good, scale(unit(heading), 14.0))
-            if self._try_clear(closer, ch):
+            if self._try_clear(closer, ch, source="creep_closer"):
                 return True
             if step > 40.0:
                 step = 28.0
                 p = last_good
                 continue
             return self._fan_clear(ch, last_good, heading)
-        return self._try_clear(last_good, ch) or self._fan_clear(ch, last_good, heading)
+        return self._try_clear(last_good, ch, source="creep_last") or self._fan_clear(ch, last_good, heading)
 
     def _probe_segment(self, ch: int, a: Point, b: Point, _heading: float) -> bool:
         for t in (0.5, 0.25, 0.75):
             p = _lerp(a, b, t)
-            if self._try_clear(p, ch):
+            if self._try_clear(p, ch, source="probe"):
                 return True
-            body = self.bot.measure(p[0], p[1], ch)
+            body = self._measure_action(p, ch)
             if not _accepted(body):
                 continue
             kind = body.get("measure_result")
             if kind == "near":
-                return self._try_clear(p, ch)
+                return self._try_clear(p, ch, source="probe_near")
             if kind == "direction":
                 self._record_direction(ch, p, float(body["svd_deg"]))
-                if self._try_clear(p, ch):
+                if self._try_clear(p, ch, source="probe_dir"):
                     return True
                 along = add(p, scale(unit(float(body["svd_deg"])), 12.0))
-                if self._try_clear(along, ch):
+                if self._try_clear(along, ch, source="probe_along"):
                     return True
         return False
 
@@ -767,7 +1279,7 @@ class HuntPolicy:
         dirs = (u, scale(u, -1.0), n, scale(n, -1.0))
         for r in FAN_CLEAR_OFFSETS:
             for v in dirs:
-                if self._try_clear(add(xy, scale(v, r)), ch):
+                if self._try_clear(add(xy, scale(v, r)), ch, source="fan"):
                     return True
         return False
 

@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "question": "Q3",
+  "round": "step8_dev",
+  "implementation_target": "python",
+  "approved_decision_id": "q3_step7_accept_and_proceed_step8_20260911",
+  "status": "G8_REJECTED",
+  "methods": [
+    {
+      "method_id": "step7_active_baseline",
+      "role": "usable_baseline",
+      "script": "src/q3_benchmark.py",
+      "seed_range": [100, 149],
+      "output_files": ["results/Q3/experiments/step8_dev/baseline_100_149.json"],
+      "metrics_summary": {
+        "cases": 50,
+        "all_clear": "50/50",
+        "mean_virtual_time_s": 5064.617987490766,
+        "median_virtual_time_s": 5035.764734770831,
+        "p90_virtual_time_s": 5881.424988696378,
+        "max_virtual_time_s": 6267.189339798991,
+        "pending_at_exit_max": 0,
+        "invalid_action_count_max": 0,
+        "exit_accepted": "50/50",
+        "boundary_all_clear": "16/16",
+        "boundary_virtual_time_s": 6897.4034962203405
+      }
+    },
+    {
+      "method_id": "step8_clear_ready_future_edge_insertion",
+      "role": "main_candidate",
+      "script": "src/q3_benchmark.py --step8-clear-ready-insertion",
+      "seed_range": [100, 149],
+      "output_files": ["results/Q3/experiments/step8_dev/candidate_100_149.json"],
+      "metrics_summary": {
+        "cases": 50,
+        "all_clear": "50/50",
+        "mean_virtual_time_s": 5118.179293335277,
+        "median_virtual_time_s": 5143.848295345761,
+        "p90_virtual_time_s": 5960.280645734256,
+        "max_virtual_time_s": 6182.946088607989,
+        "mean_paired_delta_s": 53.56130584451184,
+        "mean_paired_delta_pct": 1.0575586545086784,
+        "median_paired_delta_s": 20.31519517436027,
+        "p90_paired_delta_s": 249.5687241969393,
+        "worst_regression_s": 448.19963213948995,
+        "candidate_better_share": 0.24,
+        "candidate_better_cases": 12,
+        "candidate_equal_cases": 9,
+        "candidate_worse_cases": 29,
+        "pending_at_exit_max": 0,
+        "invalid_action_count_max": 0,
+        "exit_accepted": "50/50",
+        "insertions": 177,
+        "insertion_successes": 177,
+        "insertion_fallbacks": 0,
+        "pending_ready_at_exit_max": 0,
+        "boundary_all_clear": "16/16",
+        "boundary_virtual_time_s": 6538.494646610585,
+        "boundary_virtual_time_delta_s": -358.90884960975563
+      }
+    }
+  ],
+  "comparison": {
+    "paired_cases": 50,
+    "same_seed_range": true,
+    "all_clear_and_protocol_gate": "PASS",
+    "mean_improvement_gate": "FAIL",
+    "tail_gate": "FAIL",
+    "g8_verdict": "REJECT",
+    "baseline_default_remains_active": true,
+    "locked_evaluation_required": false,
+    "step9_allowed": false,
+    "reason": "The candidate is 1.0576% slower on mean, has positive paired P90 and worst regressions, and is faster in only 24% of development cases."
+  },
+  "cost_decomposition_mean_s": {
+    "baseline": {
+      "travel": 4334.017987490765,
+      "detect": 555.5999999999998,
+      "switch": 109.46,
+      "clear_ok": 63.500000000000085,
+      "clear_miss": 2.0400000000000027,
+      "backbone_planned": 1481.7312013382432,
+      "backbone_rejoin": 261.86827613920565,
+      "localization": 768.9222322193464,
+      "clear_detour": 1821.4962777939706
+    },
+    "candidate": {
+      "travel": 4387.579293335278,
+      "detect": 555.5999999999999,
+      "switch": 109.46,
+      "clear_ok": 63.500000000000064,
+      "clear_miss": 2.040000000000015,
+      "backbone_planned": 1481.7312013382432,
+      "backbone_rejoin": 194.60955741404206,
+      "localization": 753.0501437798896,
+      "clear_detour": 1958.1883908031025
+    }
+  },
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "suite": "local_mock_full_disk_v1",
+    "formal_test": false,
+    "official_practice": false
+  },
+  "warnings": [
+    "The fixed boundary case improves, but it does not override the independent 50-case development regression.",
+    "No locked seeds, official practice, formal test, route switch, Step 9, commit, or push was performed."
+  ],
+  "reviewed_at": "2026-09-11T17:55:32.8490660+08:00"
+}

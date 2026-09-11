@@ -8,11 +8,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from belief import ChannelBook
-from coverage import covering_phases, directional_waypoints, omni_waypoints
+from coverage import (
+    Q4_OUTER_FULL_N,
+    Q4_OUTER_FULL_R,
+    Q4_OUTER_LITE_N,
+    Q4_OUTER_LITE_R,
+    covering_phases,
+    directional_waypoints,
+    omni_waypoints,
+    pick_q4_outer_ring,
+)
 from geometry import dist
 from mock_sim import MockSim, Source
 from robot_client import FnTransport, RobotClient
-from runner_q4 import run_q4
+from runner_q4 import run_q4, run_q4_v2
 
 
 def _mix_sources(n: int, n_dir: int, rng: random.Random) -> list[Source]:
@@ -81,6 +90,44 @@ class TestQ4Mock(unittest.TestCase):
                 seen_outer = True
             elif on_inner and seen_outer:
                 self.fail("inner-ring covering scan after outer ring started")
+
+    def test_pick_q4_outer_ring(self):
+        self.assertEqual(
+            pick_q4_outer_ring(12, 4),
+            (Q4_OUTER_LITE_R, Q4_OUTER_LITE_N),
+        )
+        self.assertEqual(
+            pick_q4_outer_ring(16, 0),
+            (Q4_OUTER_LITE_R, 0),
+        )
+        self.assertEqual(
+            pick_q4_outer_ring(2, 7),
+            (Q4_OUTER_LITE_R, Q4_OUTER_LITE_N),
+        )
+        self.assertEqual(
+            pick_q4_outer_ring(2, 10),
+            (Q4_OUTER_FULL_R, Q4_OUTER_FULL_N),
+        )
+        self.assertEqual(
+            pick_q4_outer_ring(None, None),
+            (Q4_OUTER_FULL_R, Q4_OUTER_FULL_N),
+        )
+
+    def test_v_nofar_fixed_outer(self):
+        sources = _mix_sources(14, 4, random.Random(5))
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4(bot)
+        self.assertEqual(stats["cleared"], 14)
+        self.assertEqual(stats["q4_outer_n"], Q4_OUTER_FULL_N)
+
+    def test_dynamic_outer_from_enter(self):
+        sources = _mix_sources(14, 4, random.Random(5))
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_v2(bot, q4_omni_n=10, q4_dir_n=4)
+        self.assertEqual(stats["cleared"], 14)
+        self.assertEqual(stats["q4_outer_n"], Q4_OUTER_LITE_N)
 
     def test_near_center_outward(self):
         src = [
