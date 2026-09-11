@@ -74,8 +74,10 @@ def wait_practice_enter(
     raise TimeoutError(f"等待 /enter 超时 {timeout_s:.0f}s，最后响应={last_body}")
 
 
-def run_hunt(problem: str, bot: RobotClient) -> dict[str, Any]:
-    return HuntPolicy(bot, directional=(problem == "4")).run(do_enter=False)
+def run_hunt(problem: str, bot: RobotClient, target_n: int | None = None) -> dict[str, Any]:
+    return HuntPolicy(
+        bot, directional=(problem == "4"), target_n=target_n
+    ).run(do_enter=False)
 
 
 def save_drill_log(

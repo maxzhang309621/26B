@@ -9,6 +9,8 @@ ARENA_R = 1800.0
 X_MIN, X_MAX = 400.0, 1300.0
 Y_MIN, Y_MAX = 400.0, 800.0
 H_DEFAULT = 600.0
+H_COMPACT = 400.0
+RHO_COMPACT = 450.0
 
 
 def body_axes(theta_deg: float) -> tuple[Point, Point]:
@@ -96,6 +98,26 @@ def recommend_second_sides(
         return p
 
     return clip(from_body(s1, theta_deg, rho, h)), clip(from_body(s1, theta_deg, rho, -h))
+
+
+def _clip_arena(p: Point) -> Point:
+    r = dist(p, (0.0, 0.0))
+    if r > ARENA_R:
+        return scale(p, ARENA_R / r)
+    return p
+
+
+def recommend_second_sides_compact(
+    s1: Point,
+    theta_deg: float,
+    h: float = H_COMPACT,
+    rho: float = RHO_COMPACT,
+) -> tuple[Point, Point]:
+    """Shorter orthogonal pair: enough for ±1° → 20 m clear, less travel."""
+    return (
+        _clip_arena(from_body(s1, theta_deg, rho, h)),
+        _clip_arena(from_body(s1, theta_deg, rho, -h)),
+    )
 
 
 def recommend_second(

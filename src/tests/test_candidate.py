@@ -11,6 +11,7 @@ from candidate import (
     in_candidate_region,
     intersection_angle_deg,
     recommend_second,
+    recommend_second_sides_compact,
 )
 from geometry import add, dist, scale, unit
 
@@ -39,3 +40,12 @@ class TestCandidate(unittest.TestCase):
         self.assertGreaterEqual(beta, 60.0)
         self.assertLessEqual(beta, 120.0)
         self.assertLessEqual(dist(s2, (0.0, 0.0)), 1800.0)
+
+    def test_compact_second_is_closer(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        far = recommend_second(s1, th, now=s1)
+        a, b = recommend_second_sides_compact(s1, th)
+        self.assertLess(dist(a, s1), dist(far, s1))
+        self.assertLess(dist(b, s1), dist(far, s1))
+        self.assertGreater(dist(a, s1), 400.0)
