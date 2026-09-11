@@ -81,3 +81,17 @@ python q1_cli.py
   - `python invert_cli.py --mock`：三局包含率=1、残差带通过；均误差约 7.6–10.2 m；图写入 `output/inversion/`
   - `python invert_cli.py --drill ../output/drill/p3-20260911-144700.json`：20 频道一致性报告，未崩溃
 
+## T18–T24 问题 4 路径时效（2026-09-11）
+
+- 文件：`src/policy.py`、`src/coverage.py`、`src/belief.py`、`src/runner_q4.py`、`src/q4_benchmark.py`、`src/tests/test_q4.py`、`src/tests/test_q3_cost_ledger.py`
+- **T18 台账**：定向模式也计算 `backbone_planned_s` / `rejoin_s`；三档加和 = `travel_s`。
+- **T19 延后**：`q4_path_profile="pathopt"` 在覆盖期只清「当前听点新听源」以及增量代价 ≤ 400 m 的 pending；其余覆盖结束后再清。`run_q4()` 仍为 `v_nofar` 听完即清。
+- **T20/T21 扇区锯齿与贪心跳点**：mock 漏清或行驶变差，**未接入默认 pathopt**。听点几何仍是 900/1200/2100 双环最近邻。`sector_fused_order` / `open_path_order` / `hypothesis_hits` 保留备用。
+- **T23**：`directional_front_cover_ok(dense=...)`。
+- **T24**：`run_q4_pathopt()`；benchmark 接受 `q4_outer_mode` 与 `--profile pathopt`。
+- 冒烟：
+  - `python -m unittest discover -s tests -q` → **91 passed**
+  - mock 24 种子：pathopt **miss=0**；均 VT **7561 vs 7769**（v_nofar）；均行驶 **6179 vs 6393**
+- 未做：官方演练对照；正式测试禁止。默认提交入口仍是 `run_q4()` = `v_nofar`。
+
+

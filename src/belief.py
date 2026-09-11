@@ -92,6 +92,25 @@ class ChannelBook:
         for p in scans:
             if dist(p, probe) < 35.0:
                 return False
+        return self.hypothesis_hits(ch, probe, directional=directional, assume_directional=assume_directional) > 0
+
+    def hypothesis_hits(
+        self,
+        ch: int,
+        probe: Point,
+        directional: bool = True,
+        assume_directional: bool = False,
+    ) -> int:
+        """Count remaining (pose, heading) samples still audible at probe."""
+        if ch in self.cleared or ch in self.detections:
+            return 0
+        scans = self.silent_at.get(ch, [])
+        if not scans:
+            return 1
+        for p in scans:
+            if dist(p, probe) < 35.0:
+                return 0
+        hits = 0
         samples = _sample_arena()
         for g in samples:
             if dist(probe, g) > R_MIGHT_HEAR + 1e-9:
@@ -100,7 +119,8 @@ class ChannelBook:
             if not omni_dead:
                 if assume_directional:
                     continue
-                return True
+                hits += 1
+                continue
             if not directional:
                 continue
             for h in _HEADINGS:
@@ -112,5 +132,5 @@ class ChannelBook:
                 if ruled:
                     continue
                 if _in_sector(g, h, probe):
-                    return True
-        return False
+                    hits += 1
+        return hits

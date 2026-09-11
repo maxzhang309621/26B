@@ -38,6 +38,7 @@ def _run_case(
     q4_outer_mode: str = "nn",
     dynamic_outer: bool = True,
     q4_profile: str = "v2",
+    q4_path_profile: str = "v_nofar",
 ) -> dict[str, Any]:
     robot_id = f"q4-benchmark-{case_id}-{q4_outer_mode}"
     sim = MockSim(robot_id=robot_id, sources=sources)
@@ -50,6 +51,7 @@ def _run_case(
         q4_outer_mode=q4_outer_mode,
         q4_dynamic_outer=dynamic_outer,
         q4_profile=q4_profile,
+        q4_path_profile=q4_path_profile,
     )
     stats = policy.run()
     n_dir = sum(1 for s in sources if s.heading_deg is not None)
@@ -98,7 +100,7 @@ def main() -> None:
     )
     p.add_argument(
         "--profile",
-        choices=("v2", "dynamic_pure"),
+        choices=("v2", "dynamic_pure", "pathopt"),
         default="v2",
         help="Q4 profile (default: v2)",
     )
@@ -194,18 +196,23 @@ def main() -> None:
             sys.exit(1)
         return
 
+    path_profile = "pathopt" if args.profile == "pathopt" else "v_nofar"
     tag = (
         f"q4_{args.profile}"
         if dynamic
         else f"q4_fixed_12x2100_{args.outer_mode}"
     )
+    if args.profile == "pathopt":
+        tag = "q4_pathopt"
+        dynamic = False
     rows = [
         _run_case(
             f"seed-{i}",
             _mix_sources(i),
             q4_outer_mode=args.outer_mode,
             dynamic_outer=dynamic,
-            q4_profile=args.profile,
+            q4_profile="dynamic_pure" if args.profile == "pathopt" else args.profile,
+            q4_path_profile=path_profile,
         )
         for i in range(args.seeds)
     ]

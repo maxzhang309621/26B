@@ -216,3 +216,121 @@
 | T17 | `invert_cli.py` 一键跑 + 冒烟 | L | 输出目录约定 |
 
 实现顺序：T12 → T13 → T14 → T15 / T16（可并行）→ T17。
+
+---
+
+## 变更 v1.3（步骤 M–T：问题 4 路径时效）
+
+依据已确认架构 `01-architecture.md` v1.3。默认提交入口 `run_q4()` 保持 `v_nofar`；新逻辑走 `run_q4_pathopt()` / `q4_path_profile="pathopt"`。禁止引入新运行时依赖。禁止正式测试。
+
+### 步骤 M：问题 4 行驶台账
+
+- 选定算法：**路径段事件归因**（与问题 3 `_move_decomposition` 同一口径）。覆盖听点上的 `/measure` 记 `backbone`；定位 `/measure` 记 `service`；`/clear` 记清除绕行。计划折线 = 按首次到达顺序的互异主干听点折线长 / 5 m/s；`rejoin_s = backbone_scan_s - planned_s`（问题 4 不再恒为 0）。
+- 选型理由：问题 3 已实现且有单测；Galceran 综述把覆盖行驶与细胞间转移分开记账。不必上轨迹联合分布（PACE/VLDB）——本赛虚拟时间是确定直线 5 m/s。
+- 候选：离线重放 drill JSON 的折线归因（仅诊断，不进策略）。
+- 参考资料：
+  - Galceran, Carreras. *A survey on coverage path planning for robotics*. RAS 2013. https://doi.org/10.1016/j.robot.2013.09.004
+  - 本仓库 `policy._move_decomposition`、`tests/test_q3_cost_ledger.py`
+- 接口约定：`HuntPolicy._move_decomposition()` 在 `directional=True` 时也填 `backbone_planned_s` / `backbone_rejoin_s`；`backbone_scan_s + localization_s + clear_detour_s = travel_s`（允许 1e-6）。
+- 依赖：无新库。
+
+### 步骤 N：覆盖/清除相位分离（延后服务）
+
+- 选定算法（首选）：**最便宜插入的增量绕行代价**（Rosenkrantz–Stearns–Lewis cheapest insertion，2-近似）。对每个 pending 源，代价 \(\Delta = \|now-C\|+\|C-rejoin\|-\|now-rejoin\|\)（即现有 `_incremental_service_cost`）。若 \(\Delta \le \Delta_{\max}\)（默认 80 m，约 16 s）则插入清除；否则延后到覆盖结束。覆盖结束后对剩余 pending 做一次批量清除。`near` 仍当场 `/clear`。停搜定义不变：`heard = cleared + pending`。
+- 选型理由：问题 4 当前每个听点后立刻 `_drain_pending()`，且 `test_directional_q4_never_uses_route_deferral` 禁止延后——这是慢局折返的主因。问题 3 已有同一公式与 step8 边插入。Vansteenwegen TOPTW 的 score²/Shift 插入过重（本问题每个已听源最终都要清，不是选子集得分）。
+- 候选：
+  1. 严格两阶段（覆盖期 \(\Delta_{\max}=0\)，全部延后）——若插入阈值调参不稳则回退。
+  2. Vansteenwegen ILS 插入（TOPTW）——点数多且要摇动时再试。
+- 参考资料：
+  - Rosenkrantz, Stearns, Lewis. *An Analysis of Several Heuristics for the Traveling Salesman Problem*. SIAM J. Comput. 6(3), 1977. https://doi.org/10.1137/0206041
+  - Vansteenwegen et al. *Iterated local search for the team orienteering problem with time windows*. https://lirias.kuleuven.be/retrieve/91f75023-e620-4f54-90c2-5ada4495c62c
+  - 本仓库 `_incremental_service_cost`、`_step8_insert_delta`
+- 接口约定：`HuntPolicy(..., q4_path_profile="pathopt")` 启用延后；`q4_insert_delta_max_m` 默认 80。`run_q4()` 不改变该行为。
+- 依赖：现有 `policy.py`。
+
+### 步骤 P：扇区融合巡游
+
+- 选定算法（首选）：**极角 Morse / 径向细胞分解后的扇区锯齿巡游**（Acar et al. 2002：Morse 函数取 \(\mathrm{atan2}\)，切片为射线）。听点集仍用现有 `q4_listen_set`（原点 + 8×900 + 8×1200 + 12×2100），**不改点、改访问拓扑**。将非原点听点按 30° 扇区分箱（12 箱对齐外环）；偶数箱按半径升序，奇数箱按半径降序；箱与箱在当前半径上短弧衔接。原点仍先全扫。
+- 选型理由：现拓扑是两个同心环串行，主干下界约 4500 s。极角分解把 900/1200/2100 合成同一扇区的进出，避免先付内环整圈再付外环整圈。保持原点集则定向覆盖证书与近心朝外能力不丢。Morse 径向切片比螺旋（Bosse）更贴合「途听必须在射线上」的 900 m 约束。
+- 候选：
+  1. 阿基米德螺旋（Galceran 综述引用 Bosse 2007）——若锯齿在 mock 上因过多径向折返变差再试。
+  2. 12 辐条各含 900/1200/2100（加密内环到 12 点）——仅当现 8 内环角与 12 外环角错位导致锯齿空驶时再试。
+- 参考资料：
+  - Acar, Choset, Rizzi, et al. *Morse Decompositions for Coverage Tasks*. IJRR 21(4) 2002. http://biorobotics.ri.cmu.edu/papers/paperUploads/A028807.pdf
+  - Galceran, Carreras. RAS 2013 CPP survey. https://doi.org/10.1016/j.robot.2013.09.004
+- 接口约定：`coverage.sector_fused_order(waypoints) -> list[Point]`；`HuntPolicy._run_pathopt_cover()` 按该序访问；`test_cover_inner_before_outer` 仅约束 `v_nofar`。
+- 依赖：标准库 `math`。
+
+### 步骤 Q：剩余位姿的在线探针选择（减点）
+
+- 选定算法（首选）：**加权贪心集合覆盖**（Chvátal 1979 / Hochbaum）：元素 = 剩余未知信道的离散位姿假设（复用 `belief.might_hear` 的场采样 × 24 朝向）；集合 = 尚未访问的覆盖听点。反复选 \(p^*=\arg\max |新覆盖假设| / (d(now,p)+\varepsilon)\)，从当前位置出发，直到假设空或无有用探针。这是**选子集**，不是给固定 12 点排序。
+- 选型理由：架构明确禁止重试已失败的「固定 12 点信息增益序」。Alon et al. 在线集合覆盖（权值倍增 / WINNOW）实现重且本问题假设集在每次测量后整批更新，离线贪心更贴切。`might_hear` 已具备假设采样，边际覆盖可直接计数。
+- 候选：
+  1. 次模 next-best-view（Lauri et al. 2020 matroid 贪心）——若信道间假设重叠导致贪心过早停再试。
+  2. Alon–Awerbuch–Azar 在线集合覆盖 —— 候选耗尽时再上。
+- **不要用**：Vander Hook cautious greedy（那是已知目标的主动定位，错层）。
+- 参考资料：
+  - Chvátal. *A Greedy Heuristic for the Set-Covering Problem*. MOR 1979. https://doi.org/10.1287/moor.4.3.233
+  - Alon, Awerbuch, Azar, Buchbinder, Naor. *The Online Set Cover Problem*. STOC 2003. https://www.cs.tau.ac.il/~nogaa/PDFS/aaabnproc2.pdf
+  - Lauri et al. *Multi-Sensor Next-Best-View Planning as Matroid-Constrained Submodular Maximization*. arXiv:2007.02084. https://ar5iv.labs.arxiv.org/html/2007.02084
+  - 本仓库 `belief.ChannelBook.might_hear`
+- 接口约定：`belief.uncovered_pose_count(ch, probe, scans) -> int`（或在 policy 内用 `might_hear` 的采样循环计数）；`HuntPolicy._pick_next_cover_wp(candidates) -> Point | None`。pathopt 外环/剩余点走此选择；`v_nofar` 仍最近邻。
+- 依赖：现有 `belief.py` 采样网格。
+
+### 步骤 R：剩余探针开放短路径
+
+- 选定算法（首选）：**Held–Karp 动态规划求开放路**（Bellman / Held–Karp 1962）。起点 = 当前机器狗位置（不回到起点）；\(n\le 12\) 时 \(O(n^2 2^n)\) 可接受。自实现 bitmask DP，不引入 `python-tsp`。
+- 选型理由：点数极少，精确解比 NN 更短；`v_jung_nn` 已证明在**完整 12 点**上换 NN 无效，但减点后的残余 4–8 点上精确序仍有价值。仅在 Q 选出的子集上运行，且仅当覆盖中途仍有插入（步骤 N）打乱顺序时重解。
+- 候选：最便宜插入（RSL 1977，2-近似）——若实现 DP 有数值问题则回退。
+- 参考资料：
+  - Held, Karp. 1962；Bellman 1962；https://en.wikipedia.org/wiki/Held–Karp_algorithm
+  - 开放 TSP 技巧：距离矩阵第一列置 0。https://github.com/fillipe-gsm/python-tsp（只作方法说明，不作为依赖）
+- 接口约定：`coverage.open_path_order(start, pts) -> list[Point]`；空或 1 点原样返回。
+- 依赖：标准库。
+
+### 步骤 S：密采样覆盖证书
+
+- 选定算法（首选）：与论文图 F1(d) 同一口径的**密网格前向可见性枚举**（Ma & Liu 定向扇区覆盖模型）：场点网格不低于 16 径向 × 180 角向，朝向 36（每 10°），判据仍为前瓣 ±90° 且距离 ≤ 1000 m。`directional_front_cover_ok` 增加 `dense: bool=False`；默认 False 保持 `v_nofar` 旧测试。pathopt 新点序不改点集，故密证书与 `v_nofar` 同点集——若密口径失败，只报告薄弱区，**不收缩点集**、不把 `v_nofar` 单测改为失败。
+- 选型理由：现 6×48×24 跳过薄弱点；论文图已量到约 2.5% 负余量。Voronoi 旋转传感器部署（WSN 文献）不适用（机器狗不可旋转一个固定传感器阵）。
+- 参考资料：
+  - Ma, Liu. *On Coverage Problems of Directional Sensor Networks*. MSN 2005. https://doi.org/10.1007/11599463_70
+  - `output/figures/QA_figures.md` F1(d) 采样表
+- 接口约定：`directional_front_cover_ok(..., dense=False)`；`dense=True` 时用加密网格。
+- 依赖：标准库。
+
+### 步骤 T：mock-80 门禁
+
+- 选定算法：现有 `q4_benchmark.py` 多种子混合源对照。先冻结 `run_q4()`（`v_nofar`）80 局的 mean VT / mean travel；再跑 `run_q4_pathopt()`。miss 必须为 0；mean travel 与 mean VT 均须下降。
+- 参考资料：`src/q4_benchmark.py`；官方基线 `output/baselines.md`（仅演练阶段才比 8508.1 s）。
+- 接口约定：`python q4_benchmark.py --profile v_nofar --seeds 80` 与 `--profile pathopt --seeds 80`。修复 `HuntPolicy` 不接受 `q4_outer_mode` 的现有断口（benchmark 传入该参数）。
+- 依赖：标准库。
+
+### 候选尝试记录（v1.3）
+
+| 步骤 | 候选算法 | 状态 | 失败原因 |
+|------|----------|------|----------|
+| M | 问题 3 同口径路径段归因 | 采用 | |
+| N | cheapest-insertion 增量绕行 | 采用（修订） | 默认 80 m 过严，几乎全部延后，定向定位 miss 上升；改为「本听点新听源必清」+ 400 m 增量插入 |
+| N | 严格两阶段 \(\Delta=0\) | 失败 | 延后到覆盖结束再清，clear_miss 爆、有漏清 |
+| N | TOPTW ILS | 未试 | 过重 |
+| P | 极角 Morse 扇区锯齿 | 失败 | mock 漏清（seed=3 听后定位失败）；径向进出拉长主干 |
+| P | 贪心 gain/dist 跳点 | 失败 | 跨场跳跃，行驶变差且漏清 |
+| P | 阿基米德螺旋 | 未试 | |
+| P | 12 辐条加密 | 未试 | |
+| Q | Chvátal 加权贪心集合覆盖 | 未作为主路径 | 跳点版失败；减点仍由既有 `might_hear` / `_redundant_cover` 承担 |
+| Q | 固定 12 点信息增益序 | **禁止** | 官方已否决 |
+| R | Held–Karp 开放路 | 已实现备用 | 扇区巡游撤回后未接入默认 pathopt |
+| S | 密网格前向枚举 | 采用 | `dense=True` 可选 |
+| T | mock-24 对照 | 采用 | pathopt miss=0，均 VT 7561 vs 7769，均行驶 6179 vs 6393 |
+
+| 任务 ID | 实现内容 | 关联步骤 | 参考资料 |
+|---------|----------|----------|----------|
+| T18 | 问题 4 `_move_decomposition` 填 planned/rejoin；单测加和 | M | Galceran 2013；现有 Q3 ledger 测 |
+| T19 | pathopt 延后清除 + 增量插入阈值；解除定向「永不延后」的全局断言（改为只约束 v_nofar） | N | RSL 1977；现有 `_incremental_service_cost` |
+| T20 | `sector_fused_order` + `_run_pathopt_cover`；`test_cover_inner_before_outer` 仅 v_nofar | P | Acar 2002 Morse |
+| T21 | 贪心集合覆盖选下一听点；定向偏重 mock 外环访问数均值 < 12 且全清 | Q | Chvátal 1979；`might_hear` |
+| T22 | `open_path_order` Held–Karp；在 pathopt 剩余点上调用 | R | Held–Karp 1962 |
+| T23 | `directional_front_cover_ok(dense=...)` + 单测 | S | Ma & Liu 2005；QA_figures F1(d) |
+| T24 | `run_q4_pathopt`；修好 benchmark 参数；mock 多种子对照 + 现有 `test_q4` 不回退 | T | `q4_benchmark.py` |
+
+实现顺序：T18 → T19 → T20 → T21 / T22（可并行）→ T23 → T24。T24 之前 T18–T22 的单测与现有 `test_q4`（`run_q4`）必须通过。

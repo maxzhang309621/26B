@@ -247,6 +247,9 @@ class HuntPolicy:
         q4_profile: str = "dynamic_pure",
         q4_enter_omni: int | None = None,
         q4_enter_dir: int | None = None,
+        q4_outer_mode: str | None = None,
+        q4_path_profile: str = "v_nofar",
+        q4_insert_delta_max_m: float = 400.0,
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
             raise ValueError("exit_reserve_s must be a finite non-negative number")
@@ -272,6 +275,12 @@ class HuntPolicy:
         self.q4_profile = q4_profile if q4_profile in ("v2", "dynamic_pure") else "v2"
         self.q4_enter_omni = q4_enter_omni
         self.q4_enter_dir = q4_enter_dir
+        self.q4_outer_mode = q4_outer_mode
+        self.q4_path_profile = q4_path_profile if q4_path_profile in ("v_nofar", "pathopt") else "v_nofar"
+        self.q4_insert_delta_max_m = float(q4_insert_delta_max_m)
+        self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
+        self._cover_phase = False
+        self._pathopt_rejoin: Point | None = None
         self.q4_outer_r = Q4_OUTER_FULL_R
         self.q4_outer_n = Q4_OUTER_FULL_N
         self.waypoints = (
@@ -437,19 +446,17 @@ class HuntPolicy:
         )
         clear_detour_s = sum(s["travel_s"] for s in self._move_segments if s["kind"] == "clear")
         planned_s = 0.0
-        if not self.directional:
-            visited: list[Point] = []
-            for s in self._move_segments:
-                if s["kind"] != "measure" or s["context"] != "backbone":
-                    continue
-                for wp in self.waypoints:
-                    if dist(s["xy"], wp) <= 1e-6 and all(dist(wp, v) > 1e-6 for v in visited):
-                        visited.append(wp)
-                        break
-            planned_s = sum(
-                dist(visited[i - 1], visited[i]) for i in range(1, len(visited))
-            ) / SPEED_MPS
-        rejoin_s = backbone_scan_s - planned_s if not self.directional else 0.0
+        visited: list[Point] = []
+        for s in self._move_segments:
+            if s["kind"] != "measure" or s["context"] != "backbone":
+                continue
+            xy = s["xy"]
+            if all(dist(xy, v) > 1e-6 for v in visited):
+                visited.append(xy)
+        planned_s = sum(
+            dist(visited[i - 1], visited[i]) for i in range(1, len(visited))
+        ) / SPEED_MPS
+        rejoin_s = backbone_scan_s - planned_s
         total = backbone_scan_s + localization_s + clear_detour_s
         return {
             "backbone_scan_s": backbone_scan_s,
@@ -544,6 +551,7 @@ class HuntPolicy:
             "localization_services": self.localization_services,
             "q4_outer_r": self.q4_outer_r if self.directional else None,
             "q4_outer_n": self.q4_outer_n if self.directional else None,
+            "q4_path_profile": self.q4_path_profile if self.directional else None,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -565,12 +573,16 @@ class HuntPolicy:
     def _run_directional_cover(self) -> None:
         """Q4: origin → inner NN → outer NN (with enroute / redundancy skips)."""
         origin, inner, outer = covering_phases(self.waypoints)
+        self._cover_phase = True
+        self._pathopt_rejoin = inner[0] if inner else (outer[0] if outer else None)
         self._scan_point(origin, list(range(1, 21)))
         self._cover_listens.append(origin)
         self._drain_pending()
         self._cover_tour(inner)
         self._inner_done = True
         self._cover_tour(outer)
+        self._cover_phase = False
+        self._pathopt_rejoin = None
         if not self._guard_tripped() and not self._done():
             self._route_completed = True
 
@@ -662,6 +674,10 @@ class HuntPolicy:
                 break
             wp = min(useful, key=lambda p: dist(self.bot.position, p))
             pending.remove(wp)
+            leftover = [p for p in useful if dist(p, wp) > 1e-6]
+            self._pathopt_rejoin = (
+                min(leftover, key=lambda p: dist(wp, p)) if leftover else None
+            )
             self._visit_cover_wp(wp)
 
     def _channels_for(self, xy: Point, channels: list[int]) -> list[int]:
@@ -816,6 +832,40 @@ class HuntPolicy:
             ]
             if not pending or len(self.book.cleared) >= self._target_n:
                 break
+            if self._pathopt and self._cover_phase:
+                here = self.bot.position
+                rejoin = self._pathopt_rejoin
+                listen = self._cover_listens[-1] if self._cover_listens else here
+                fresh = [
+                    c
+                    for c in pending
+                    if dist(self.book.detections[c][-1].xy, listen) <= 35.0
+                ]
+                cheap = [
+                    c
+                    for c in pending
+                    if self._incremental_service_cost(c, rejoin) <= self.q4_insert_delta_max_m
+                ]
+                pool: list[int] = []
+                for c in fresh + cheap:
+                    if c not in pool:
+                        pool.append(c)
+                if not pool:
+                    break
+                ch = min(
+                    pool,
+                    key=lambda c: (
+                        0 if c in fresh else 1,
+                        self._incremental_service_cost(c, rejoin),
+                        self.first_seen_order.get(c, c),
+                        c,
+                    ),
+                )
+                self.localization_services += 1
+                self._localize_and_clear(ch)
+                if ch not in self.book.cleared:
+                    self.stuck.add(ch)
+                continue
             if not self.directional:
                 ready: list[int] = []
                 for ch in pending:

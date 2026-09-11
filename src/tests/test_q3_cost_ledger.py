@@ -140,6 +140,11 @@ class TestActionStatsDecomposition(unittest.TestCase):
             places=6,
         )
         self.assertAlmostEqual(move["total_s"], stats["travel_s"], places=6)
+        self.assertAlmostEqual(
+            move["backbone_scan_s"],
+            move["backbone_planned_s"] + move["backbone_rejoin_s"],
+            places=6,
+        )
 
 
 class _RejectMeasureBot:

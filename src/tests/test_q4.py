@@ -14,14 +14,19 @@ from coverage import (
     Q4_OUTER_LITE_N,
     Q4_OUTER_LITE_R,
     covering_phases,
+    directional_front_cover_ok,
     directional_waypoints,
     omni_waypoints,
+    open_path_order,
     pick_q4_outer_ring,
+    q4_listen_set,
+    sector_fused_order,
 )
 from geometry import dist
 from mock_sim import MockSim, Source
 from robot_client import FnTransport, RobotClient
-from runner_q4 import run_q4, run_q4_v2
+from runner_q4 import run_q4, run_q4_pathopt, run_q4_v2
+from policy import HuntPolicy
 
 
 def _mix_sources(n: int, n_dir: int, rng: random.Random) -> list[Source]:
@@ -138,6 +143,77 @@ class TestQ4Mock(unittest.TestCase):
         bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
         stats = run_q4(bot)
         self.assertEqual(stats["cleared"], 2, msg=stats)
+
+    def test_cover_inner_before_outer_only_vnofar(self):
+        rng = random.Random(3)
+        sources = _mix_sources(12, 4, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_pathopt(bot)
+        self.assertEqual(stats["cleared"], 12)
+        self.assertEqual(stats["q4_path_profile"], "pathopt")
+
+    def test_pathopt_near_center_outward(self):
+        src = [
+            Source(channel=4, xy=(130.0, 40.0), r_eff=1000.0, heading_deg=17.0),
+            Source(channel=9, xy=(1400.0, -200.0), r_eff=1100.0, heading_deg=None),
+        ]
+        sim = MockSim(robot_id="team-test", sources=src)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_pathopt(bot)
+        self.assertEqual(stats["cleared"], 2, msg=stats)
+
+    def test_pathopt_mixed_full_clear(self):
+        for seed, n, nd in ((3, 12, 4), (5, 16, 8), (11, 12, 12)):
+            rng = random.Random(seed)
+            sources = _mix_sources(n, nd, rng)
+            sim = MockSim(robot_id="team-test", sources=sources)
+            bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+            stats = run_q4_pathopt(bot)
+            self.assertEqual(stats["cleared"], n, msg=f"seed={seed} {stats}")
+            move = stats["move_decomposition"]
+            self.assertAlmostEqual(
+                move["backbone_scan_s"] + move["localization_s"] + move["clear_detour_s"],
+                stats["travel_s"],
+                places=5,
+            )
+
+    def test_sector_fused_order_and_open_path(self):
+        pts = q4_listen_set()
+        fused = sector_fused_order(pts)
+        self.assertTrue(all(dist(p, (0.0, 0.0)) > 1.0 for p in fused))
+        self.assertEqual(len(fused), len({(round(p[0], 6), round(p[1], 6)) for p in fused}))
+        path = open_path_order((0.0, 0.0), fused[:5])
+        self.assertEqual(len(path), 5)
+        self.assertEqual(set((round(p[0], 6), round(p[1], 6)) for p in path),
+                         set((round(p[0], 6), round(p[1], 6)) for p in fused[:5]))
+
+    def test_front_cover_ok_dense_flag(self):
+        self.assertTrue(directional_front_cover_ok())
+        coarse_fail = directional_front_cover_ok(dense=True, n_radial=8, n_ang=72, n_headings=24)
+        self.assertIsInstance(coarse_fail, bool)
+
+    def test_pathopt_defers_expensive_pending_during_cover(self):
+        class _Bot:
+            position = (0.0, 0.0)
+            virtual_time_s = 0.0
+            log: list = []
+
+            def measure(self, x, y, channel):
+                self.position = (x, y)
+                return {"accepted": True, "measure_result": "direction", "svd_deg": 180.0}
+
+            def clear(self, x, y, channel):
+                return {"accepted": True, "clear_result": "no_target_in_range"}
+
+        policy = HuntPolicy(_Bot(), directional=True, q4_path_profile="pathopt")
+        policy._cover_phase = True
+        policy._pathopt_rejoin = (2100.0, 0.0)
+        policy.book.add_direction(1, (1800.0, 0.0), 180.0)
+        policy.q4_insert_delta_max_m = 1.0
+        before = list(policy.book.pending())
+        policy._drain_pending()
+        self.assertEqual(policy.book.pending(), before)
 
 
 if __name__ == "__main__":

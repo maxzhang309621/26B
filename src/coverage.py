@@ -133,22 +133,110 @@ def directional_front_cover_ok(
     waypoints: Sequence[Point] | None = None,
     cover_r: float = COVER_R,
     arena_r: float = ARENA_R,
+    *,
+    dense: bool = False,
+    n_radial: int | None = None,
+    n_ang: int | None = None,
+    n_headings: int | None = None,
 ) -> bool:
     """Every sampled pose has a listen point in its 180° front disk of radius cover_r.
 
     This is the directional-sensor covering condition (Ma & Liu style sector
     coverage): a source is heard only if a waypoint lies in heading ±90° and
     within r_eff. Enroute 900 m stops are included for near-center outward sources.
+    dense=True uses the paper-figure grid (16 radial × 180 angular × 36 headings).
     """
     wps = q4_listen_set(waypoints)
-    headings = [i * 15.0 for i in range(24)]
-    for g in _sample_disk(arena_r, n_radial=6, n_ang=48):
+    if dense:
+        n_radial = 16 if n_radial is None else n_radial
+        n_ang = 180 if n_ang is None else n_ang
+        n_headings = 36 if n_headings is None else n_headings
+    else:
+        n_radial = 6 if n_radial is None else n_radial
+        n_ang = 48 if n_ang is None else n_ang
+        n_headings = 24 if n_headings is None else n_headings
+    headings = [i * (360.0 / n_headings) for i in range(n_headings)]
+    for g in _sample_disk(arena_r, n_radial=n_radial, n_ang=n_ang):
         for h in headings:
             if not any(
                 dist(w, g) <= cover_r + 1e-6 and _in_front_halfplane(g, h, w) for w in wps
             ):
                 return False
     return True
+
+
+def sector_fused_order(waypoints: Sequence[Point], n_bins: int = OUTER_RING_N) -> list[Point]:
+    """Polar Morse / radial-cell zigzag: even bins out, odd bins in.
+
+    Origin is dropped; caller should scan the origin first.  Existing Q4 listen
+    points are reused (900 / 1200 / 2100); only the visit topology changes.
+    """
+    if n_bins < 1:
+        raise ValueError("n_bins must be positive")
+    rest = [p for p in waypoints if dist(p, (0.0, 0.0)) > 1e-6]
+    bins: list[list[Point]] = [[] for _ in range(n_bins)]
+    for p in rest:
+        ang = math.atan2(p[1], p[0]) % (2.0 * math.pi)
+        k = int(ang * n_bins / (2.0 * math.pi)) % n_bins
+        bins[k].append(p)
+    out: list[Point] = []
+    for k, group in enumerate(bins):
+        group = sorted(group, key=lambda q: dist(q, (0.0, 0.0)))
+        if k % 2 == 1:
+            group.reverse()
+        out.extend(group)
+    return out
+
+
+def open_path_order(start: Point, pts: Sequence[Point]) -> list[Point]:
+    """Open Held–Karp path from start through pts (n≤12); NN fallback if larger."""
+    pts = list(pts)
+    n = len(pts)
+    if n <= 1:
+        return pts
+    if n > 12:
+        remaining = set(range(n))
+        order: list[Point] = []
+        cur = start
+        while remaining:
+            j = min(remaining, key=lambda i: dist(cur, pts[i]))
+            remaining.remove(j)
+            order.append(pts[j])
+            cur = pts[j]
+        return order
+    nodes = [start, *pts]
+    m = n + 1
+    inf = float("inf")
+    dist_m = [[dist(nodes[i], nodes[j]) for j in range(m)] for i in range(m)]
+    nmask = 1 << m
+    dp = [[inf] * m for _ in range(nmask)]
+    parent = [[-1] * m for _ in range(nmask)]
+    dp[1][0] = 0.0
+    for mask in range(nmask):
+        if mask & 1 == 0:
+            continue
+        for j in range(m):
+            if mask & (1 << j) == 0 or dp[mask][j] >= inf:
+                continue
+            for k in range(1, m):
+                if mask & (1 << k):
+                    continue
+                nxt = mask | (1 << k)
+                cost = dp[mask][j] + dist_m[j][k]
+                if cost < dp[nxt][k]:
+                    dp[nxt][k] = cost
+                    parent[nxt][k] = j
+    full = nmask - 1
+    end = min(range(1, m), key=lambda j: dp[full][j])
+    order_idx: list[int] = []
+    mask, j = full, end
+    while j > 0:
+        order_idx.append(j)
+        prev = parent[mask][j]
+        mask ^= 1 << j
+        j = prev
+    order_idx.reverse()
+    return [nodes[i] for i in order_idx]
 
 
 def coverage_ok(
