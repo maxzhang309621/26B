@@ -1,0 +1,87 @@
+{
+  "question": "Q3",
+  "scope": "steps2_4_local_robustness",
+  "status": "PASS",
+  "formal_test": false,
+  "checks": [
+    {
+      "name": "bearing_rounding_and_wrap",
+      "status": "PASS",
+      "evidence": "The 1.01 degree outer cone contains the -1.005 degree wrap boundary; a 1.0 degree cone excludes the same legal point."
+    },
+    {
+      "name": "known_delta_one_false_certificate",
+      "status": "PASS",
+      "evidence": "The saved two-station counterexample remains in the conservative envelope with SEC radius 20.191491 m, so it does not trigger premature clearing."
+    },
+    {
+      "name": "arena_range_and_measurement_legality",
+      "status": "PASS",
+      "evidence": "Arena and positive-range boundary fixtures pass; every returned Q3 second or third point satisfies the 1800 m arena gate."
+    },
+    {
+      "name": "no_signal_nonconvexity",
+      "status": "PASS",
+      "evidence": "Negative evidence is stored separately and is not used to shrink the SEC clearing proof."
+    },
+    {
+      "name": "scheduler_degeneracy",
+      "status": "PASS",
+      "evidence": "Deterministic tests cover legal future deferral, illegal future fallback, incremental-cost ordering, shared waypoint batching, metric semantics, and finite final draining."
+    },
+    {
+      "name": "actual_route_analytic_coverage",
+      "status": "PASS",
+      "evidence": "The certificate validates one center plus six distinct equally spaced points at radius 1150 m. Maximum angular gap is 60 degrees and the annulus endpoint maximum is 988.5114204360133 m, leaving 11.4885795639867 m."
+    },
+    {
+      "name": "coverage_certificate_negative_controls",
+      "status": "PASS",
+      "evidence": "Duplicate, missing-center, wrong-radius, uneven-angle, and five-ring routes all fail the analytic certificate. A five-point ring at radius 1200 m has boundary worst distance 1088.5984495213224 m."
+    },
+    {
+      "name": "q4_isolation",
+      "status": "PASS",
+      "evidence": "Directional mode retains the original center plus eight-point inner ring and all outer points; Q3 phase/radius tuning does not alter Q4 defaults."
+    },
+    {
+      "name": "fixed_suite_and_boundary",
+      "status": "PASS",
+      "evidence": "Round4 clears 100/100 fixed random cases and 16/16 boundary sources, with max pending_at_exit=0, max invalid_action_count=0, all exits accepted, and zero creep triggers."
+    },
+    {
+      "name": "performance_tradeoff",
+      "status": "ACCEPTED_BASELINE",
+      "evidence": "Human selected round3 eight-point route for shortest virtual time: 5347.740961681709 s versus 5441.466396980994 s for the six-point candidate. The six-point coverage proof and negative controls remain preserved as evidence."
+    }
+  ],
+  "metric_summary": {
+    "unit_tests": "49/49 PASS",
+    "round3_all_clear": "100/100",
+    "round4_all_clear": "100/100",
+    "boundary_round3": "16/16",
+    "boundary_round4": "16/16",
+    "round4_mean_virtual_time_s": 5441.466396980994,
+    "round4_time_change_vs_round3_pct": 1.752617338252871,
+    "round4_mean_actions": 117.73,
+    "round4_action_change_vs_round3_pct": -13.491072084649868,
+    "round4_mean_directions": 33.75,
+    "round4_direction_change_vs_round3_pct": -1.2580456407255691,
+    "round4_max_pending": 0.0,
+    "round4_max_invalid_actions": 0.0,
+    "coverage_margin_m": 11.4885795639867
+  },
+  "limitations": [
+    "Evidence is from the deterministic local mock only.",
+    "No official practice or formal test was run.",
+    "The merged active route is the round3 eight-point baseline; the six-point candidate is not active.",
+    "No certified_absent or Step 5 terminal-state proof is claimed."
+  ],
+  "evidence_refs": [
+    "src/tests/test_q3_step2.py",
+    "src/tests/test_q3_step3.py",
+    "src/tests/test_q3_step4.py",
+    "results/Q3/experiments/round3/run_summary.json",
+    "results/Q3/experiments/round4/run_summary.json"
+  ]
+}

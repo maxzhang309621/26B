@@ -78,6 +78,40 @@ def candidate_region(s1: Point, theta_deg: float) -> list[list[Point]]:
     return [_rect_corners(s1, theta_deg, 1.0), _rect_corners(s1, theta_deg, -1.0)]
 
 
+def recommend_second_options(
+    s1: Point,
+    theta_deg: float,
+    now: Point | None = None,
+    h: float = H_DEFAULT,
+) -> list[Point]:
+    """Return only arena- and band-legal second stations, nearest first."""
+    t_exit = ray_exit_t(s1, theta_deg, ARENA_R)
+    t_cap = min(1500.0, t_exit if t_exit > 0 else 1500.0)
+    rho = max(X_MIN, min(0.7 * t_cap, 0.5 * (X_MIN + min(X_MAX, t_cap))))
+    rho = min(max(rho, X_MIN), X_MAX)
+    now = now if now is not None else s1
+    heights: list[float] = []
+    for value in (h, 500.0, 400.0, Y_MIN):
+        hh = abs(float(value))
+        if Y_MIN <= hh <= Y_MAX and all(abs(hh - old) > 1e-9 for old in heights):
+            heights.append(hh)
+    for hh in heights:
+        options = [
+            from_body(s1, theta_deg, rho, sign * hh)
+            for sign in (1.0, -1.0)
+        ]
+        legal = [
+            p
+            for p in options
+            if math.isfinite(p[0])
+            and math.isfinite(p[1])
+            and in_candidate_region(s1, theta_deg, p)
+        ]
+        if legal:
+            legal.sort(key=lambda p: (dist(p, now), dist(p, (0.0, 0.0))))
+            return legal
+    return []
+
 def recommend_second(
     s1: Point,
     theta_deg: float,

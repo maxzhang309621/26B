@@ -8,30 +8,30 @@
   },
   "executability": {
     "status": "PASS",
-    "evidence": "Python 3.12 下现有 26/26 单元测试通过；固定两站代表场景的角锥交非空且有界，最小包围圆半径 18.2182 m，小于 20 m 清除阈值。"
+    "evidence": "Python 3.12 下 49/49 本地单元测试通过；round2、round3 与 round4 固定100局及16源边界场景均全清。"
   },
   "data_coverage": {
-    "status": "CONDITIONAL",
-    "evidence": "同一固定套件已覆盖 100 个种子、10–16 个源、源位置完整扩展到 1800 m 圆盘、有效半径 1000–1500 m，并加入 16 源/r=1799 m/r_eff=1000 m 边界压力场景；±1 度加两位小数舍入与近共线专项仍留待第2步。"
+    "status": "PASS",
+    "evidence": "固定种子0..99覆盖10–16源、R<=1800、R_eff=1000–1500，并含16源/r=1799/R_eff=1000边界；专项夹具覆盖舍入、0/360、场地/距离边界和实际六点航路解析覆盖。"
   },
   "assumption_checks": {
-    "status": "CONDITIONAL",
-    "evidence": "中心加 8 个半径 1200 m 环点的最坏接收覆盖可成立，但当前 coverage_ok 仅为采样检查；角锥尚未计入两位小数舍入余量与距离约束。"
+    "status": "PASS",
+    "evidence": "Q3 使用1.01度外包络、96边外接圆盘近似和正检测1500m上界；no_signal非凸排除不用于SEC清除证明。"
   },
   "output_degeneracy": {
     "status": "PASS",
-    "evidence": "M2 在 100 个固定随机场景与 16 源边界场景中均未触发 creep；平均 direction 由 538.02 降至 32.39，边界场景由 672 降至 40，且全清率保持不变。退化夹具证明 Q3 同频道 fallback 最多执行 1 次、最多 40 步。",
+    "evidence": "round3 在100个固定随机场景与16源边界场景中均未触发 creep；平均方向观测34.18，边界场景33，且全清率保持100/100与16/16。退化夹具证明 Q3 同频道 fallback 最多执行1次、最多40步。",
     "repair": "每次新方向观测后立即计算交会区域与最小包围圆，仅在退化或测量上限触发时进入有界 creep。"
   },
   "perturbation_sensitivity": {
-    "status": "CONDITIONAL",
-    "evidence": "已有少量随机种子可全清，但尚未系统覆盖 ±1 度误差边界、0/360 度环绕和接收半径 1000 m 下界。"
+    "status": "PASS",
+    "evidence": "旧1.0度反例在新包络下SEC半径20.191491m，不再触发提前清除；场地/距离边界及合法/非法顺路复测夹具均通过。"
   },
   "scale_check": {
     "status": "PASS",
-    "evidence": "同一 100 局下，M2 100/100 全清，平均虚拟时间 6293.9032 s、平均动作 133.49；相对 M1 分别下降 28.8406% 和 79.5220%。16 源边界场景 16/16 全清、7682.2413 s、159 动作。"
+    "evidence": "round3固定100局100/100全清，平均虚拟时间5347.7410s，较round2下降15.0391%；44项测试约1秒完成。"
   },
-  "verdict": "CONDITIONAL",
+  "verdict": "PASS",
   "fallback_trigger": "若交会区域为空、无界、数值退化，或达到定位测量上限仍未清除，则对该频道启用 F1_bounded_creep。",
   "evidence_refs": [
     "src/policy.py",
@@ -41,11 +41,25 @@
     "results/Q3/experiments/round0/metrics/baseline_metrics.json",
     "docs/pipeline/00-state.md"
   ],
-  "gate_interpretation": "第1步 G3 机械验收通过；总体风险探针仍为 CONDITIONAL，因为第2步物理可行域与舍入边界尚未完成。不得据此进入正式测试。",
+  "gate_interpretation": "第2至4步已通过本地 G3 机械硬门槛；第4步六点路线存在时间与动作数权衡，等待人工取舍。这不替代官方演练、正式测试或第5步终态证明。",
   "step1_evidence_refs": [
     "results/Q3/experiments/round0/run_summary.json",
     "results/Q3/experiments/round1/run_summary.json",
     "code/Q3/reviews/q3_python_review.json",
     "results/Q3/experiments/round1/logs/q4_regression_from_global_creep_guard.txt"
+  ],
+  "steps2_3_evidence_refs": [
+    "code/Q3/q3_code_plan.md",
+    "results/Q3/experiments/round2/run_summary.json",
+    "results/Q3/experiments/round3/run_summary.json",
+    "robustness/Q3/q3_robustness_summary.json",
+    "code/Q3/reviews/q3_python_review.json"
+  ],
+  "step4_evidence_refs": [
+    "code/Q3/q3_code_plan.md",
+    "src/tests/test_q3_step4.py",
+    "results/Q3/experiments/round4/run_summary.json",
+    "robustness/Q3/q3_robustness_summary.json",
+    "code/Q3/reviews/q3_python_review.json"
   ]
 }
