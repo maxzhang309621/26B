@@ -1,0 +1,2973 @@
+{
+  "problem": "3",
+  "mode": "practice",
+  "robot_id": "202610057095",
+  "stats": {
+    "cleared": 10,
+    "virtual_time_s": 4226.415161,
+    "avg_clear_s": 422.6415161,
+    "channels": [
+      1,
+      2,
+      4,
+      6,
+      9,
+      10,
+      13,
+      16,
+      18,
+      19
+    ],
+    "creep_calls": 0,
+    "creep_steps": 0,
+    "route_rechecks": 8,
+    "route_recheck_hits": 8,
+    "deferred_channels": 8,
+    "dedicated_localizations": 2,
+    "localization_services": 10,
+    "q4_outer_r": null,
+    "q4_outer_n": null,
+    "pending_at_exit": 0,
+    "exit_accepted": true,
+    "termination_reason": "coverage_complete",
+    "completed": true,
+    "route_completed": true,
+    "stopped_at_clear_limit": false,
+    "deadline_guard": false,
+    "action_failure": false,
+    "action_failure_detail": null,
+    "unknown_channels_at_exit": [
+      3,
+      5,
+      7,
+      8,
+      11,
+      12,
+      14,
+      15,
+      17,
+      20
+    ],
+    "move_decomposition": {
+      "backbone_scan_s": 1810.7535699297264,
+      "backbone_planned_s": 1525.8163327467016,
+      "backbone_rejoin_s": 284.93723718302476,
+      "localization_s": 360.3326217098826,
+      "clear_detour_s": 1286.3289682709822,
+      "total_s": 3457.415159910591
+    },
+    "clear_audit": {
+      "sec_center": {
+        "attempts": 3,
+        "success": 3,
+        "miss": 0,
+        "travel_s": 385.45409697820236,
+        "miss_travel_s": 0.0
+      },
+      "bearing": {
+        "attempts": 7,
+        "success": 7,
+        "miss": 0,
+        "travel_s": 900.8748712927797,
+        "miss_travel_s": 0.0
+      }
+    },
+    "step8_insertion_enabled": false,
+    "step8_insertions": [],
+    "step8_pending_ready": [],
+    "travel_m": 17287.075799552953,
+    "travel_s": 3457.415159910591,
+    "detect_s": 599.999999360391,
+    "switch_s": 119.0,
+    "clear_ok_s": 50.00000172901775,
+    "clear_miss_s": 0.0,
+    "n_measure": 120,
+    "n_clear": 10,
+    "clear_ok": 10,
+    "clear_miss": 0,
+    "per_channel": {
+      "1": {
+        "n_measure": 4,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 570.8371889514101,
+        "detect_s": 20.00000046475688,
+        "switch_s": 3.0,
+        "clear_s": 4.999999583833102,
+        "total_s": 598.8371890000001
+      },
+      "2": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 135.3484260099366,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 4.999999990063429,
+        "total_s": 152.34842600000002
+      },
+      "3": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 1387.065522394483,
+        "detect_s": 44.99999960551693,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 1441.0655219999999
+      },
+      "4": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 34.13129507678024,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 4.999999923219669,
+        "total_s": 51.13129499999991
+      },
+      "5": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "6": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 160.8688077816342,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 5.000000218365983,
+        "total_s": 177.86880800000017
+      },
+      "7": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "8": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "9": {
+        "n_measure": 3,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 135.204368793897,
+        "detect_s": 15.0,
+        "switch_s": 3.0,
+        "clear_s": 5.000000206102925,
+        "total_s": 158.20436899999993
+      },
+      "10": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 100.53432752807652,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 5.000000471923215,
+        "total_s": 117.53432799999973
+      },
+      "11": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "12": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "13": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 169.8730007662039,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 5.000000233796044,
+        "total_s": 186.87300099999993
+      },
+      "14": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "15": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "16": {
+        "n_measure": 2,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 152.96987271398137,
+        "detect_s": 10.0,
+        "switch_s": 2.0,
+        "clear_s": 5.000000286018633,
+        "total_s": 169.969873
+      },
+      "17": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      },
+      "18": {
+        "n_measure": 7,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 336.645168075373,
+        "detect_s": 34.99999953315174,
+        "switch_s": 7.0,
+        "clear_s": 5.000000391475226,
+        "total_s": 383.64516799999996
+      },
+      "19": {
+        "n_measure": 4,
+        "n_clear": 1,
+        "clear_ok": 1,
+        "clear_miss": 0,
+        "travel_s": 273.9371818188149,
+        "detect_s": 19.999999756965565,
+        "switch_s": 4.0,
+        "clear_s": 5.000000424219522,
+        "total_s": 302.937182
+      },
+      "20": {
+        "n_measure": 9,
+        "n_clear": 0,
+        "clear_ok": 0,
+        "clear_miss": 0,
+        "travel_s": 0.0,
+        "detect_s": 45.0,
+        "switch_s": 9.0,
+        "clear_s": 0.0,
+        "total_s": 54.0
+      }
+    }
+  },
+  "enter": {
+    "accepted": true,
+    "real_timestamp_ms": 1789122309516,
+    "virtual_time_s": 0,
+    "max_virtual_duration_s": 360000,
+    "max_real_duration_s": 1200,
+    "remaining_real_duration_s": 1200
+  },
+  "log": [
+    {
+      "path": "/enter",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "enter-wait-2-55242fdf"
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309516,
+        "virtual_time_s": 0,
+        "max_virtual_duration_s": 360000,
+        "max_real_duration_s": 1200,
+        "remaining_real_duration_s": 1200
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-3-d1d7d943",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 1
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309517,
+        "virtual_time_s": 5,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-4-6910b4c0",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 2
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309519,
+        "virtual_time_s": 11,
+        "measure_result": "direction",
+        "svd_deg": 56.59
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-5-11639c0e",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309520,
+        "virtual_time_s": 17,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-6-70cd32b7",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 4
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309520,
+        "virtual_time_s": 23,
+        "measure_result": "direction",
+        "svd_deg": 54.18
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-7-18bdf61e",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309521,
+        "virtual_time_s": 29,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-8-061c3f70",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 6
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309521,
+        "virtual_time_s": 35,
+        "measure_result": "direction",
+        "svd_deg": 216.81
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-9-248870ea",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309522,
+        "virtual_time_s": 41,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-10-d6403f91",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309523,
+        "virtual_time_s": 47,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-11-1c11705a",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 9
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309547,
+        "virtual_time_s": 53,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-12-55375614",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 10
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309548,
+        "virtual_time_s": 59,
+        "measure_result": "direction",
+        "svd_deg": 293.69
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-13-b12b4f42",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309549,
+        "virtual_time_s": 65,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-14-6dd6d292",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309562,
+        "virtual_time_s": 71,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-15-df92dd03",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 13
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309578,
+        "virtual_time_s": 77,
+        "measure_result": "direction",
+        "svd_deg": 189.95
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-16-605ca4ae",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309579,
+        "virtual_time_s": 83,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-17-46f9bb73",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309593,
+        "virtual_time_s": 89,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-18-73abfc55",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 16
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309610,
+        "virtual_time_s": 95,
+        "measure_result": "direction",
+        "svd_deg": 95.51
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-19-10406f16",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309625,
+        "virtual_time_s": 101,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-20-bed5f6b9",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309641,
+        "virtual_time_s": 107,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-21-519ec916",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 19
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309656,
+        "virtual_time_s": 113,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-22-d20d6355",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309671,
+        "virtual_time_s": 119,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-23-593b1e01",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 1
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309687,
+        "virtual_time_s": 365,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-24-67ae8384",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309688,
+        "virtual_time_s": 371,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-25-1a64e47e",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309703,
+        "virtual_time_s": 377,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-26-bd906e5d",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309704,
+        "virtual_time_s": 383,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-27-74ab0299",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309705,
+        "virtual_time_s": 389,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-28-b931d9c3",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 9
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309705,
+        "virtual_time_s": 395,
+        "measure_result": "direction",
+        "svd_deg": 83.53
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-29-323ee89c",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309706,
+        "virtual_time_s": 401,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-30-96992c3c",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309707,
+        "virtual_time_s": 407,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-31-def539a2",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309718,
+        "virtual_time_s": 413,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-32-cc5d12db",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309733,
+        "virtual_time_s": 419,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-33-7088acc8",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309735,
+        "virtual_time_s": 425,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-34-82ecb618",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309735,
+        "virtual_time_s": 431,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-35-c9960161",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 19
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309748,
+        "virtual_time_s": 437,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-36-c8c62971",
+        "position": {
+          "x": 1200.0,
+          "y": 0.0
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309764,
+        "virtual_time_s": 443,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-37-38077fe1",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 1
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309779,
+        "virtual_time_s": 632.688048,
+        "measure_result": "direction",
+        "svd_deg": 103.79
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-38-951c053d",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309794,
+        "virtual_time_s": 638.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-39-7ccbe51b",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309795,
+        "virtual_time_s": 644.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-40-d36ed4d9",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309797,
+        "virtual_time_s": 650.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-41-b6dcd568",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309798,
+        "virtual_time_s": 656.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-42-f3534435",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309810,
+        "virtual_time_s": 662.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-43-c612a9bf",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309824,
+        "virtual_time_s": 668.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-44-f2eb7bdc",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309826,
+        "virtual_time_s": 674.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-45-11c955a6",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309841,
+        "virtual_time_s": 680.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-46-8d96ae70",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309857,
+        "virtual_time_s": 686.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-47-bf2aee07",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309873,
+        "virtual_time_s": 692.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-48-16bdf4dd",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 19
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309889,
+        "virtual_time_s": 698.688048,
+        "measure_result": "direction",
+        "svd_deg": 77.67
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-49-537699d7",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309905,
+        "virtual_time_s": 704.688048,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-50-dd9fd431",
+        "position": {
+          "x": 848.5281374238571,
+          "y": 848.5281374238571
+        },
+        "channel": 9
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309920,
+        "virtual_time_s": 710.688048,
+        "measure_result": "direction",
+        "svd_deg": 354.89
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-51-a6b1d15c",
+        "position": {
+          "x": 362.4075544293434,
+          "y": 1434.3255959209744
+        },
+        "channel": 19
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309936,
+        "virtual_time_s": 868.934149,
+        "measure_result": "direction",
+        "svd_deg": 357.09
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-52-7c35f51c",
+        "position": {
+          "x": 970.088797743505,
+          "y": 1403.641987647471
+        },
+        "channel": 19
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309937,
+        "virtual_time_s": 995.62523,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-53-38c95956",
+        "position": {
+          "x": 1291.9023178973491,
+          "y": 809.1324488088633
+        },
+        "channel": 9
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309951,
+        "virtual_time_s": 1135.829599,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-54-26452221",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309953,
+        "virtual_time_s": 1411.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-55-6cedbd3e",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309966,
+        "virtual_time_s": 1417.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-56-583830b2",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309982,
+        "virtual_time_s": 1423.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-57-8cb63f8c",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309997,
+        "virtual_time_s": 1429.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-58-0396c3ee",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122309999,
+        "virtual_time_s": 1435.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-59-f5d7c87f",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310000,
+        "virtual_time_s": 1441.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-60-ddf956c7",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310001,
+        "virtual_time_s": 1447.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-61-c708b0b5",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310012,
+        "virtual_time_s": 1453.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-62-89d26ab0",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310028,
+        "virtual_time_s": 1459.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-63-a66e06ff",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310044,
+        "virtual_time_s": 1465.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-64-dd587d86",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310045,
+        "virtual_time_s": 1471.77693,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-65-52fb35d2",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 2
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310060,
+        "virtual_time_s": 1477.77693,
+        "measure_result": "direction",
+        "svd_deg": 314.11
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-66-09017b68",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 4
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310061,
+        "virtual_time_s": 1483.77693,
+        "measure_result": "direction",
+        "svd_deg": 328.13
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-67-6b67fe09",
+        "position": {
+          "x": 7.347880794884119e-14,
+          "y": 1200.0
+        },
+        "channel": 1
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310062,
+        "virtual_time_s": 1489.77693,
+        "measure_result": "direction",
+        "svd_deg": 28.12
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-68-8fbce2fa",
+        "position": {
+          "x": 471.0383217353568,
+          "y": 714.0958839020599
+        },
+        "channel": 2
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310075,
+        "virtual_time_s": 1630.125356,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-69-72023660",
+        "position": {
+          "x": 597.8377681465055,
+          "y": 828.3129272024462
+        },
+        "channel": 4
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310090,
+        "virtual_time_s": 1669.256651,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-70-b129d900",
+        "position": {
+          "x": 673.8763833847536,
+          "y": 1560.1188266597596
+        },
+        "channel": 1
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310106,
+        "virtual_time_s": 1821.405792,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-71-8778787d",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310108,
+        "virtual_time_s": 2163.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-72-8c1b6cfd",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310121,
+        "virtual_time_s": 2169.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-73-95b387f4",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310137,
+        "virtual_time_s": 2175.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-74-51c29985",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310139,
+        "virtual_time_s": 2181.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-75-2544e2d7",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310140,
+        "virtual_time_s": 2187.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-76-d083ef15",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310152,
+        "virtual_time_s": 2193.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-77-d71275bd",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310168,
+        "virtual_time_s": 2199.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-78-d818b331",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310170,
+        "virtual_time_s": 2205.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-79-34cf0457",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310172,
+        "virtual_time_s": 2211.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-80-8e3b3d76",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310183,
+        "virtual_time_s": 2217.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-81-c568b6c5",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310185,
+        "virtual_time_s": 2223.505589,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-82-ffd38f91",
+        "position": {
+          "x": -848.528137423857,
+          "y": 848.5281374238571
+        },
+        "channel": 16
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310186,
+        "virtual_time_s": 2229.505589,
+        "measure_result": "direction",
+        "svd_deg": 9.35
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-83-319a7129",
+        "position": {
+          "x": -93.84032178508176,
+          "y": 972.7893537371771
+        },
+        "channel": 16
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310187,
+        "virtual_time_s": 2387.475462,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-84-4fe8a8b3",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310188,
+        "virtual_time_s": 2688.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-85-14f4f58e",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310189,
+        "virtual_time_s": 2694.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-86-1f92e95c",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310190,
+        "virtual_time_s": 2700.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-87-30fe9139",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310191,
+        "virtual_time_s": 2706.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-88-aaf8a7a4",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310192,
+        "virtual_time_s": 2712.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-89-57bde3ce",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310193,
+        "virtual_time_s": 2718.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-90-985932b9",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310214,
+        "virtual_time_s": 2724.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-91-b38205b4",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310216,
+        "virtual_time_s": 2730.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-92-4b215a03",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310217,
+        "virtual_time_s": 2736.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-93-50001a3f",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310218,
+        "virtual_time_s": 2742.087638,
+        "measure_result": "direction",
+        "svd_deg": 279.81
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-94-04c426d4",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310219,
+        "virtual_time_s": 2748.087638,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-95-ef575c9f",
+        "position": {
+          "x": -1200.0,
+          "y": 1.4695761589768238e-13
+        },
+        "channel": 6
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310220,
+        "virtual_time_s": 2754.087638,
+        "measure_result": "direction",
+        "svd_deg": 341.95
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-96-da9b9fd2",
+        "position": {
+          "x": -463.94883392066583,
+          "y": -735.3425602487946
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310245,
+        "virtual_time_s": 2968.174158,
+        "measure_result": "direction",
+        "svd_deg": 168.74
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-97-7a0d8170",
+        "position": {
+          "x": -1094.3148499554927,
+          "y": -609.5576935052036
+        },
+        "channel": 18
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310260,
+        "virtual_time_s": 3101.732806,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-98-287c8dc2",
+        "position": {
+          "x": -364.031440482483,
+          "y": -272.4294170649359
+        },
+        "channel": 6
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310276,
+        "virtual_time_s": 3267.601614,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-99-2226bcc5",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310278,
+        "virtual_time_s": 3424.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-100-c77b2e16",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310279,
+        "virtual_time_s": 3430.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-101-b42f93a5",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310291,
+        "virtual_time_s": 3436.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-102-017010fe",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310307,
+        "virtual_time_s": 3442.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-103-b3597d77",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310324,
+        "virtual_time_s": 3448.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-104-463b9cb5",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310325,
+        "virtual_time_s": 3454.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-105-5f0db5f0",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310339,
+        "virtual_time_s": 3460.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-106-408f9da6",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310355,
+        "virtual_time_s": 3466.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-107-57470875",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310370,
+        "virtual_time_s": 3472.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-108-e61155a3",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310386,
+        "virtual_time_s": 3478.150846,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-109-7ddfd08e",
+        "position": {
+          "x": -848.5281374238572,
+          "y": -848.528137423857
+        },
+        "channel": 13
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310388,
+        "virtual_time_s": 3484.150846,
+        "measure_result": "direction",
+        "svd_deg": 64.18
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-110-3bc5d43f",
+        "position": {
+          "x": -478.5911651687635,
+          "y": -83.95796648360786
+        },
+        "channel": 13
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310390,
+        "virtual_time_s": 3659.023847,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-111-d5bcaa21",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310391,
+        "virtual_time_s": 3907.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-112-e2f26d08",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310392,
+        "virtual_time_s": 3913.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-113-f5332331",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310416,
+        "virtual_time_s": 3919.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-114-efdf9e37",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310418,
+        "virtual_time_s": 3925.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-115-bb661e5c",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310432,
+        "virtual_time_s": 3931.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-116-ac0a3f01",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310433,
+        "virtual_time_s": 3937.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-117-881e347d",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310435,
+        "virtual_time_s": 3943.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-118-21a8ef19",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310436,
+        "virtual_time_s": 3949.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-119-a094493f",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310437,
+        "virtual_time_s": 3955.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-120-9ed29745",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310438,
+        "virtual_time_s": 3961.89001,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-121-4ab6a6f1",
+        "position": {
+          "x": -2.2043642384652357e-13,
+          "y": -1200.0
+        },
+        "channel": 10
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310439,
+        "virtual_time_s": 3967.89001,
+        "measure_result": "direction",
+        "svd_deg": 40.12
+      }
+    },
+    {
+      "path": "/clear",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "clear-122-73ed72f8",
+        "position": {
+          "x": 384.3912483663238,
+          "y": -876.0831225955599
+        },
+        "channel": 10
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310441,
+        "virtual_time_s": 4073.424338,
+        "clear_result": "success"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-123-252c8057",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 3
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310462,
+        "virtual_time_s": 4172.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-124-0f6710f0",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 5
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310464,
+        "virtual_time_s": 4178.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-125-4e626868",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 7
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310466,
+        "virtual_time_s": 4184.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-126-f06e49f5",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 8
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310494,
+        "virtual_time_s": 4190.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-127-e12f99b2",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 11
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310496,
+        "virtual_time_s": 4196.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-128-5983e533",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 12
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310510,
+        "virtual_time_s": 4202.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-129-2c3ef585",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 14
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310511,
+        "virtual_time_s": 4208.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-130-3fb3d570",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 15
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310525,
+        "virtual_time_s": 4214.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-131-5ec249ac",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 17
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310527,
+        "virtual_time_s": 4220.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/measure",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "measure-132-900d652f",
+        "position": {
+          "x": 848.5281374238568,
+          "y": -848.5281374238572
+        },
+        "channel": 20
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310528,
+        "virtual_time_s": 4226.415161,
+        "measure_result": "no_signal"
+      }
+    },
+    {
+      "path": "/exit",
+      "http_status": 200,
+      "request": {
+        "arena_id": "default",
+        "robot_id": "202610057095",
+        "request_id": "exit-133-cc517ddb"
+      },
+      "response": {
+        "accepted": true,
+        "real_timestamp_ms": 1789122310529,
+        "virtual_time_s": 4226.415161,
+        "exit_reason": "user_exit"
+      }
+    }
+  ]
+}
