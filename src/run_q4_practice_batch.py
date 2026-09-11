@@ -1,5 +1,7 @@
 """Q4 PRACTICE-only batch. Never starts or clicks 正式测试. Never runs 问题3.
 
+Hunt path for this script is double-ring ``v_nofar`` (``run_q4``), origin+8×995+12×1865.
+
 Hard rules:
 - No coordinate / image / SendKeys clicks (正式 sits next to 演练).
 - Click allowlist is only 「开始问题4演练测试」 / 「返回演练测试」 / 演练完成「确认」.
@@ -233,9 +235,9 @@ def _one_round(
         omni_n = case_meta.get("omnidirectional_jammer_count", omni_n)
         dir_n = case_meta.get("directional_jammer_count", dir_n)
     if isinstance(omni_n, int) and isinstance(dir_n, int):
-        print(f"演练窗组成：全向 {omni_n} + 定向 {dir_n}（已记录；当前策略=v_nofar 固定 12×2100）")
+        print(f"演练窗组成：全向 {omni_n} + 定向 {dir_n}（已记录；当前策略=证书航路 8×995+12×1865 + 光学兜底）")
     else:
-        print("演练窗未读到全向/定向组成（当前策略=v_nofar 固定 12×2100）")
+        print("演练窗未读到全向/定向组成（当前策略=证书航路 8×995+12×1865 + 光学兜底）")
     stats = run_hunt(
         str(PROBLEM),
         bot,
@@ -245,7 +247,16 @@ def _one_round(
     )
     _guard_data(data_dir, baseline)
     log_path = save_drill_log(
-        str(PROBLEM), robot_id, stats, ent, bot.log, extra={"batch_index": idx, "mode": "practice"}
+        str(PROBLEM),
+        robot_id,
+        stats,
+        ent,
+        bot.log,
+        extra={
+            "batch_index": idx,
+            "mode": "practice",
+            "q4_route": stats.get("q4_route"),
+        },
     )
     official = wait_practice_result(data_dir, PROBLEM, baseline, timeout_s=20.0)
     official_body = None

@@ -165,6 +165,61 @@ def point_in_convex_polygon(p: Point, vertices: Sequence[Point]) -> bool:
     return not signs or min(signs) >= -EPS or max(signs) <= EPS
 
 
+def optical_grid_centers(
+    vertices: Sequence[Point],
+    cell: float = 25.0,
+    *,
+    max_cells: int = 96,
+) -> list[Point]:
+    """Centers of ``cell``×``cell`` squares that intersect a convex feasible polygon.
+
+    Half-diagonal of a 25 m cell is ``25√2/2 ≈ 17.68 < 20``, so a successful
+    clear at a center covers that whole cell.  Intended as a finite optical
+    fallback over an already-shrunk AOA region — not a full-arena raster.
+    """
+    if cell <= 0.0 or len(vertices) < 2:
+        return []
+    xs = [v[0] for v in vertices]
+    ys = [v[1] for v in vertices]
+    pad = 0.5 * cell
+    x0 = math.floor((min(xs) - pad) / cell) * cell
+    x1 = math.ceil((max(xs) + pad) / cell) * cell
+    y0 = math.floor((min(ys) - pad) / cell) * cell
+    y1 = math.ceil((max(ys) + pad) / cell) * cell
+    half = 0.5 * cell
+    centers: list[Point] = []
+    y = y0 + half
+    while y <= y1 + 1e-9:
+        x = x0 + half
+        while x <= x1 + 1e-9:
+            c = (x, y)
+            corners = (
+                (x - half, y - half),
+                (x - half, y + half),
+                (x + half, y - half),
+                (x + half, y + half),
+            )
+            hit = point_in_convex_polygon(c, vertices) or any(
+                point_in_convex_polygon(q, vertices) for q in corners
+            )
+            if not hit:
+                hit = any(
+                    abs(v[0] - x) <= half + EPS and abs(v[1] - y) <= half + EPS
+                    for v in vertices
+                )
+            if hit:
+                centers.append(c)
+            x += cell
+        y += cell
+    if len(centers) <= max_cells:
+        return centers
+    # Prefer cells near the polygon centroid when the region is still large.
+    cx = sum(v[0] for v in vertices) / len(vertices)
+    cy = sum(v[1] for v in vertices) / len(vertices)
+    centers.sort(key=lambda p: dist(p, (cx, cy)))
+    return centers[:max_cells]
+
+
 def intersect_feasible_region(
     stations: Sequence[Point],
     bearings_deg: Sequence[float],

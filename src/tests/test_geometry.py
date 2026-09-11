@@ -109,6 +109,18 @@ class TestGeometry(unittest.TestCase):
         self.assertAlmostEqual(e[0], 1.0, places=9)
         self.assertAlmostEqual(n[1], 1.0, places=9)
 
+    def test_optical_grid_centers_cover_square(self):
+        from geometry import optical_grid_centers, point_in_convex_polygon
+
+        # 50×50 square → half-diagonal of each 25 m cell ≤ 20 m clear radius
+        verts = [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)]
+        centers = optical_grid_centers(verts, cell=25.0)
+        self.assertGreaterEqual(len(centers), 4)
+        # every vertex falls within 20 m of some cell center
+        for v in verts:
+            self.assertTrue(any(dist(v, c) <= CLEAR_R + 1e-6 for c in centers))
+        self.assertTrue(any(point_in_convex_polygon(c, verts) for c in centers))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -109,6 +109,7 @@ def run_hunt(
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
 ) -> dict[str, Any]:
+    """Run the hunt after /enter. Q4 practice uses origin+8×995+12×1865."""
     if problem == "4":
         from runner_q4 import run_q4
 
