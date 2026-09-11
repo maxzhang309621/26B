@@ -139,3 +139,80 @@
 | T9 | `locate_quality` + 单测 | A, B |
 | T10 | `next_stations` / `front_compatible` + 单测 | C |
 | T11 | `policy` 接线 + Q3/Q4 mock 回归 | D, E |
+
+## 变更 v1.2（步骤 G–L：运行数据反演验证）
+
+依据已确认架构 `01-architecture.md` v1.2。赛题示向误差为**有界闭区间 ±1°**（非高斯），因此不采用需要噪声方差的 LS/ML/CRLB 作为主验证；那些方法作候选对照，不进默认路径。
+
+### 步骤 G：日志解析
+
+- 选定算法：**按频道分组的事件流解析**。遍历 `path`/`request`/`response`；仅 `accepted=true`；`/measure` 的 `direction` 记测站与 `svd_deg`，`no_signal` 记静默点，`near` 记近距点；`/clear` 记清除点与成败。
+- 选型理由：与附件 2 字段及现有 `RobotClient.log` / `output/drill/*.json` 一致，无额外依赖。
+- 参考资料：附件 2 协议；现仓库 `src/robot_client.py`、`output/drill/p3-*.json`。
+- 接口约定：`parse_action_log(log) -> dict[int, ChannelObs]`；`parse_drill_file(path) -> dict[int, ChannelObs]`。
+- 依赖：标准库。
+
+### 步骤 H：单频道反演
+
+- 选定算法（首选）：
+  1. **可行域**：`intersect_cones` / `locate_quality`，半宽 **1.01°**（与策略舍入余量一致）。
+  2. **点估计**：有界凸可行域顶点的 **Welzl 最小包围圆心**（1-center / 最小最大误差点）。有界误差 AOA 下，真值落在半平面交多面体，包围圆心是与策略清除点同一口径的代表点。
+- 选型理由：与问题 1/3/4 几何核同一公式，避免「论文一套、策略一套」。测站极少，不必 PLS/Stansfield 迭代。
+- 候选（仅当包围圆心系统偏离真值且包含性仍过时再试）：伪线性最小二乘（Brown DWLS / PLS）；两两示向线交点加权（Fusion 2014 weighted intersections）。**默认不实现。**
+- 参考资料：
+  - Welzl 1991 最小包围圆（步骤 1 已采用）
+  - Bishop, Jensfelt et al. *Characterizing the Worst-Case Position Error in Bearing-Only Target Localization*. https://publications.lib.chalmers.se/publication/218784
+  - Doğançay, Hmam. *Optimal angular sensor separation for AOA localization*. Signal Processing 88 (2008).
+  - 候选：`Performance Analysis of AOA-Based Localization Using the LS Approach` (2020) https://doi.org/10.1155/2020/9346142
+- 接口约定：`invert_channel(obs, delta_deg=1.01) -> InvertResult`（region、point_est=sec_center、sec_r、can_clear_20）。
+- 依赖：现有 `geometry.py`。
+
+### 步骤 I：有真值批量验证
+
+- 选定算法：**集合包含检验 + 圆周残差**。
+  - 包含：真源必须落在全部 `direction` 测站的闭角扇交内（半平面 `contains`，不依赖裁剪框顶点）。
+  - 残差：\(\tilde\theta = \mathrm{wrap}(\theta_{\mathrm{true}}-\mathrm{svd})\)，应落在 \(\pm 1^\circ\)（mock 生成规则）。
+  - 定位误差：\(\| \hat G - G \|_2\)；清除距离：成功 `/clear` 点到真源。
+- 选型理由：赛题误差模型是有界而非高斯；包含性是模型正确的充分可测条件。Monte Carlo RMSE 闭合式（LS-MSE 2020）需要 \(\sigma_\theta\)，与 ±1° 闭区间不符，不作门禁。
+- 接口约定：`validate_with_truth(result, obs, source_xy) -> TruthMetrics`；`containment_rate(rows) -> float`。
+- 批量：mock 全向种子 `(0,10),(1,12)` + 定向混合 `(3,12,4)`；有效 `direction≥2` 的频道包含率必须为 1。
+- 依赖：`mock_sim` + `runner_q3` / `runner_q4`。
+
+### 步骤 J：无真值一致性
+
+- 选定算法：**自洽残差**。用点估计反推各站示向，与测量差的绝对值；以及 `can_clear_20` 与最后一次 `clear_ok` 是否同号。标题必须标明「仅一致性，非定位精度」。
+- 选型理由：官方演练不给坐标，不能报 RMSE。
+- 接口约定：`validate_consistency(result, obs) -> ConsistMetrics`。
+- 依赖：步骤 G–H。
+
+### 步骤 K：可视化
+
+- 选定算法：Matplotlib 静态图（与步骤 7 / 25B 一致）：(1) 单频道交会叠真值与测站示向；(2) 估计 vs 真值散点（等比例 + y=x）；(3) 定位误差直方图（m）；(4) 示向残差直方图（deg）。
+- 参考资料：项目 `src/viz.py`。
+- 依赖：`matplotlib>=3.7`。
+
+### 步骤 L：CLI
+
+- 选定算法：批处理入口。`--mock` 跑有真值批次并出图；`--drill FILE` 只跑一致性（缺真值不崩溃）。输出 `output/inversion/`。
+- 依赖：标准库 argparse。
+
+### 候选尝试记录（v1.2）
+
+| 步骤 | 候选算法 | 状态 | 失败原因 |
+|------|----------|------|----------|
+| H | Welzl 包围圆心 | 采用 | |
+| H | 伪线性 LS / DWLS | 未试 | 默认不需要 |
+| H | 两两交点加权 | 未试 | 默认不需要 |
+| I | 有界角扇包含 + wrap 残差 | 采用 | |
+| I | 高斯 CRLB / 解析 MSE | 未采用 | 与 ±1° 闭区间误差模型不符 |
+
+| 任务 ID | 实现内容 | 关联步骤 | 参考资料 |
+|---------|----------|----------|----------|
+| T12 | `log_parse.py` + 单测 | G | 附件 2；drill JSON |
+| T13 | `inversion.py` 复用几何核 + 单测（无误差两站） | H | Welzl；Bishop 最坏定位误差 |
+| T14 | `validation.py` 包含/残差；mock 多种子包含率=1 | I | 赛题 ±1°；mock `_site_error_deg` |
+| T15 | 无真值一致性 + 读 drill JSON | J | 架构 v1.2 步骤 J |
+| T16 | `viz_inversion.py` 四类图 | K | `src/viz.py` |
+| T17 | `invert_cli.py` 一键跑 + 冒烟 | L | 输出目录约定 |
+
+实现顺序：T12 → T13 → T14 → T15 / T16（可并行）→ T17。
