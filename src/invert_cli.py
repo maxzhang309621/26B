@@ -59,6 +59,7 @@ def _run_mock_case(name: str, sources: list[Source], directional: bool) -> dict[
     rows = []
     pairs = []
     sample = None
+    sample_score = -1.0
     for ch, obs in sorted(grouped.items()):
         inv = invert_channel(obs)
         if ch not in truth:
@@ -67,8 +68,25 @@ def _run_mock_case(name: str, sources: list[Source], directional: bool) -> dict[
         rows.append(met)
         if inv.point_est is not None:
             pairs.append((truth[ch], inv.point_est))
-        if sample is None and inv.n_direction >= 2 and inv.region.vertices:
-            sample = (obs, inv, truth[ch])
+        if (
+            inv.n_direction >= 2
+            and inv.region.vertices
+            and inv.region.bounded
+            and math.isfinite(inv.sec_radius)
+            and 5.0 <= inv.sec_radius <= 50.0
+        ):
+            score = inv.sec_radius + 0.4 * inv.n_direction
+            if score > sample_score:
+                sample_score = score
+                sample = (obs, inv, truth[ch])
+    if sample is None:
+        for ch, obs in sorted(grouped.items()):
+            if ch not in truth:
+                continue
+            inv = invert_channel(obs)
+            if inv.n_direction >= 2 and inv.region.vertices:
+                sample = (obs, inv, truth[ch])
+                break
     summary = summarize_truth(rows)
     return {
         "name": name,
