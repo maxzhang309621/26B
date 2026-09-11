@@ -70,3 +70,14 @@ python q1_cli.py
 - `HuntPolicy`：两站以上先问 `can_clear_20`；第二站列表接 `next_stations`，空则回退原 compact/recommend。
 - 冒烟：`python -m unittest tests.test_geometry tests.test_candidate tests.test_q3 tests.test_q4 tests.test_protocol tests.test_practice_guard -q` → 38 passed。
 - 未做：官方演练对照（步骤 F）；正式测试禁止。
+
+## T12–T17 运行数据反演验证（2026-09-11）
+
+- 文件：`src/log_parse.py`、`src/inversion.py`、`src/validation.py`、`src/viz_inversion.py`、`src/invert_cli.py`、`src/tests/test_inversion.py`
+- 反演复用 `intersect_cones` / `locate_quality`（半宽 1.01°），点估计为 Welzl 包围圆心；不写回策略。
+- 残差门禁用 ±1.01°（赛题 ±1° + `svd_deg` 两位小数舍入）。
+- 冒烟：
+  - `python -m unittest tests.test_inversion -q` → 9 passed（含空日志、缺文件、无误差两站、Q3 seed0 包含率=1）
+  - `python invert_cli.py --mock`：三局包含率=1、残差带通过；均误差约 7.6–10.2 m；图写入 `output/inversion/`
+  - `python invert_cli.py --drill ../output/drill/p3-20260911-144700.json`：20 频道一致性报告，未崩溃
+
