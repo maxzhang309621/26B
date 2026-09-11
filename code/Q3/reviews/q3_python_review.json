@@ -1,41 +1,52 @@
 {
   "question": "Q3",
-  "review_id": "q3_python_review_step1_20260911",
-  "scope": [
+  "review_id": "q3_python_review_step4_20260911",
+  "previous_review_id": "q3_python_review_steps2_3_20260911",
+  "reviewed_files": [
+    "code/Q3/q3_code_plan.md",
+    "src/coverage.py",
     "src/policy.py",
+    "src/runner_q3.py",
+    "src/q3_optimized_policy.py",
     "src/q3_benchmark.py",
-    "src/tests/test_q3.py"
+    "src/tests/test_q3_step4.py",
+    "results/Q3/experiments/round4/metrics/candidate_metrics.json",
+    "results/Q3/experiments/round4/run_summary.json",
+    "robustness/Q3/q3_robustness_summary.json"
   ],
   "verdict": "PASS",
   "syntax": {
     "status": "PASS",
-    "evidence": "Python 3.12 unittest discovery: 28/28 PASS."
+    "evidence": "Python 3.12 py_compile passed for the merged source set; unittest discovery: 55/55 PASS."
   },
   "input_contract": {
     "status": "PASS",
-    "evidence": "run_q3 and RobotClient call signatures unchanged; official transport not invoked."
+    "evidence": "RobotClient signatures and official transport remain unchanged. Q3 uses nine legal waypoints (centre plus eight ring points); the retained round3 benchmark reports zero rejected actions and accepted exits in 100 fixed cases plus the boundary case."
   },
   "method_alignment": {
     "status": "PASS",
-    "evidence": "After a successful second direction observation, control returns to the intersection/SEC branch before creep; deterministic test requires zero creep calls."
+    "evidence": "The merged Q3 non-directional policy retains the fastest centre plus eight-point inner ring. The six-point radius-1150 m, phase-10-degree route remains a separately verified candidate in round4 and is not active. Q4 retains its original eight-point inner ring and all outer points."
   },
   "reproducibility": {
     "status": "PASS",
-    "evidence": "q3_benchmark.py fixes seeds 0..99 and persists per-case metrics plus one deterministic boundary case."
+    "evidence": "Round3 uses local_mock_full_disk_v1, seeds 0..99, the deterministic 16-source boundary case, Python 3.12, and persisted per-case JSON metrics. The merged runner_q3 entry point reproduces the same round3 metrics."
   },
   "output_contract": {
     "status": "PASS",
-    "evidence": "Existing result fields are preserved; creep_calls and creep_steps are additive diagnostics."
+    "evidence": "Round2, round3, and the round4 candidate contain persisted metrics and run summaries. The merged baseline is round3; round4 remains an auditable rejected-on-time candidate with formal_test=false."
   },
   "regression": {
     "status": "PASS",
-    "evidence": "All 28 tests pass, including shared Q4 full-clear regression and Q3 per-channel fallback bound."
+    "evidence": "55 tests cover remote Q4 behavior, Q1/Q2 geometry and candidates, Q3 steps 1-4 through the isolated q3_optimized_policy, malformed coverage routes, a five-point counterexample, the retained Q3 eight-ring route, and Q4 route isolation."
+  },
+  "performance_tradeoff": {
+    "status": "ACCEPTED_BASELINE",
+    "evidence": "The human selected the fastest round3 baseline: mean virtual time 5347.740961681709 s versus round4 six-point candidate 5441.466396980994 s. The six-point candidate reduces actions but is not merged as the active route."
   },
   "limitations": [
-    "Verdict applies only to Q3 directional=False Step 1.",
-    "Q4 directional=True retains its pre-creep behavior and was not optimized in this round.",
-    "Feasible-region physics enhancements belong to Step 2.",
-    "No official practice or formal test was run."
-  ],
-  "resolved_failure_evidence": "results/Q3/experiments/round1/logs/q4_regression_from_global_creep_guard.txt"
+    "Verdict is local-mock G3 evidence only.",
+    "No official practice or formal test was run.",
+    "The six-point route is retained only as evaluated candidate evidence; the merged Q3 route is the round3 eight-point baseline.",
+    "Step 5 and certified_absent are intentionally not claimed."
+  ]
 }

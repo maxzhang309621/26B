@@ -11,6 +11,9 @@ ARENA_R = 1800.0
 COVER_R = 1000.0
 OMNI_RING_R = 1200.0
 OMNI_RING_N = 8
+Q3_RING_R = 1150.0
+Q3_RING_N = 6
+Q3_RING_PHASE_DEG = 10.0
 MID_RING_R = 900.0
 MID_RING_N = 0
 OUTER_RING_R = 2100.0
@@ -129,3 +132,123 @@ def coverage_ok(
         if min(dist(p, w) for w in wps) > cover_r + 1e-6:
             return False
     return True
+
+def q3_waypoints(
+    ring_r: float = Q3_RING_R,
+    phase_deg: float = Q3_RING_PHASE_DEG,
+) -> list[Point]:
+    """Return the evaluated Q3 six-ring candidate, not the active route."""
+
+    pts: list[Point] = [(0.0, 0.0)]
+    phase = math.radians(phase_deg)
+    for k in range(Q3_RING_N):
+        angle = 2.0 * math.pi * k / Q3_RING_N + phase
+        pts.append((ring_r * math.cos(angle), ring_r * math.sin(angle)))
+    return pts
+
+
+def q3_worst_case_distance(
+    arena_r: float = ARENA_R,
+    cover_r: float = COVER_R,
+    ring_r: float = Q3_RING_R,
+) -> float:
+    """Analytic worst distance for the evaluated six-ring candidate."""
+
+    if arena_r < 0.0 or cover_r < 0.0 or ring_r < 0.0:
+        raise ValueError("coverage radii must be non-negative")
+    if arena_r <= cover_r:
+        return 0.0
+    half_gap = math.pi / Q3_RING_N
+    cosine = math.cos(half_gap)
+    return max(
+        math.sqrt(
+            max(
+                0.0,
+                radius * radius + ring_r * ring_r - 2.0 * radius * ring_r * cosine,
+            )
+        )
+        for radius in (cover_r, arena_r)
+    )
+
+
+def q3_coverage_certificate(
+    arena_r: float = ARENA_R,
+    cover_r: float = COVER_R,
+    ring_r: float = Q3_RING_R,
+    *,
+    waypoints: Sequence[Point] | None = None,
+) -> dict[str, object]:
+    """Validate actual six-ring geometry and return its analytic certificate."""
+
+    if arena_r < 0.0 or cover_r < 0.0 or ring_r < 0.0:
+        raise ValueError("coverage radii must be non-negative")
+    actual = list(waypoints if waypoints is not None else q3_waypoints(ring_r))
+    finite = all(math.isfinite(x) and math.isfinite(y) for x, y in actual)
+    center_count = sum(dist(point, (0.0, 0.0)) <= 1e-7 for point in actual)
+    ring = [point for point in actual if dist(point, (0.0, 0.0)) > 1e-7]
+    radii = [dist(point, (0.0, 0.0)) for point in ring]
+    radius_matches = bool(radii) and all(abs(value - ring_r) <= 1e-7 for value in radii)
+    distinct = all(
+        dist(point, other) > 1e-7
+        for index, point in enumerate(actual)
+        for other in actual[index + 1 :]
+    )
+    angles = sorted(math.atan2(y, x) % (2.0 * math.pi) for x, y in ring)
+    gaps = (
+        [angles[index + 1] - angles[index] for index in range(len(angles) - 1)]
+        + [angles[0] + 2.0 * math.pi - angles[-1]]
+        if angles
+        else []
+    )
+    maximum_gap = max(gaps) if gaps else 2.0 * math.pi
+    regular = bool(gaps) and max(gaps) - min(gaps) <= 1e-10
+    ring_inside_arena = all(value <= arena_r + 1e-9 for value in radii)
+    structure_valid = (
+        finite
+        and len(actual) == Q3_RING_N + 1
+        and center_count == 1
+        and len(ring) == Q3_RING_N
+        and distinct
+        and radius_matches
+        and regular
+        and ring_inside_arena
+    )
+    annulus_inner = min(cover_r, arena_r)
+    half_gap = maximum_gap / 2.0
+    cosine = math.cos(half_gap)
+    endpoint_distances = {
+        str(radius): math.sqrt(
+            max(
+                0.0,
+                radius * radius + ring_r * ring_r - 2.0 * radius * ring_r * cosine,
+            )
+        )
+        for radius in (annulus_inner, arena_r)
+    }
+    annulus_worst = max(endpoint_distances.values()) if arena_r > cover_r else 0.0
+    centre_worst = min(arena_r, cover_r)
+    overall_worst = max(centre_worst, annulus_worst)
+    coverage_valid = annulus_worst * annulus_worst <= cover_r * cover_r + 1e-6
+    return {
+        "certificate_type": "analytic_regular_ring",
+        "analytic_proof_valid": structure_valid,
+        "ring_count": len(ring),
+        "ring_radius_m": ring_r,
+        "actual_ring_radii_m": radii,
+        "center_count": center_count,
+        "distinct_waypoints": distinct,
+        "regular_angular_spacing": regular,
+        "maximum_angular_gap_deg": math.degrees(maximum_gap),
+        "ring_inside_arena": ring_inside_arena,
+        "center_covered_radius_m": centre_worst,
+        "annulus_inner_radius_m": annulus_inner,
+        "annulus_outer_radius_m": arena_r,
+        "maximum_nearest_angle_rad": half_gap,
+        "maximum_nearest_angle_deg": math.degrees(half_gap),
+        "endpoint_distances_m": endpoint_distances,
+        "worst_case_distance": annulus_worst,
+        "worst_case_distance_m": annulus_worst,
+        "overall_worst_case_distance_m": overall_worst,
+        "cover_radius_m": cover_r,
+        "passes": structure_valid and coverage_valid,
+    }

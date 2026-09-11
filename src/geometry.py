@@ -11,6 +11,11 @@ Point = tuple[float, float]
 DEG = math.pi / 180.0
 CLIP = 1_000_000.0
 EPS = 1e-9
+Q3_ANGLE_HALF_WIDTH_DEG = 1.01
+Q3_ARENA_R = 1800.0
+Q3_POSITIVE_RANGE_MAX = 1500.0
+Q3_NO_SIGNAL_EXCLUSION_R = 1000.0
+Q3_CIRCLE_SIDES = 96
 
 
 def _ang_norm_deg(deg: float) -> float:
@@ -102,6 +107,117 @@ def _clip_box_planes() -> list[HalfPlane]:
         HalfPlane((-CLIP, CLIP), (0.0, -1.0), True),   # left, keep east
     ]
 
+
+def _circumscribed_polygon(center: Point, radius: float, sides: int) -> list[Point]:
+    """Regular polygon that conservatively contains a disk."""
+    if sides < 8:
+        raise ValueError("sides must be at least 8")
+    vertex_r = radius / math.cos(math.pi / sides)
+    return [
+        add(center, scale(unit((k + 0.5) * 360.0 / sides), vertex_r))
+        for k in range(sides)
+    ]
+
+
+def clip_polygon_halfplane(vertices: Sequence[Point], hp: HalfPlane) -> list[Point]:
+    """Sutherland-Hodgman clipping against one closed half-plane."""
+    if not vertices:
+        return []
+    out: list[Point] = []
+    prev = vertices[-1]
+    prev_inside = hp.contains(prev)
+    for cur in vertices:
+        cur_inside = hp.contains(cur)
+        if cur_inside != prev_inside:
+            hit = _line_intersect(prev, sub(cur, prev), hp.origin, hp.direction)
+            if hit is not None:
+                out.append(hit)
+        if cur_inside:
+            out.append(cur)
+        prev, prev_inside = cur, cur_inside
+    return _unique_points(out)
+
+
+def _disk_outer_halfplanes(center: Point, radius: float, sides: int) -> list[HalfPlane]:
+    """Tangent half-planes whose intersection contains the exact disk."""
+    planes: list[HalfPlane] = []
+    for k in range(sides):
+        normal = unit(k * 360.0 / sides)
+        boundary = add(center, scale(normal, radius))
+        tangent = (-normal[1], normal[0])
+        # cross(tangent, p-boundary) = -dot(normal, p-boundary);
+        # keep_left therefore keeps dot(normal, p-center) <= radius.
+        planes.append(HalfPlane(boundary, tangent, keep_left=True))
+    return planes
+
+
+def point_in_convex_polygon(p: Point, vertices: Sequence[Point]) -> bool:
+    """Boundary-inclusive containment for a consistently oriented convex polygon."""
+    if not vertices:
+        return False
+    if len(vertices) == 1:
+        return dist(p, vertices[0]) <= EPS
+    signs: list[float] = []
+    for a, b in zip(vertices, list(vertices[1:]) + [vertices[0]]):
+        cr = cross(sub(b, a), sub(p, a))
+        if abs(cr) > EPS:
+            signs.append(cr)
+    return not signs or min(signs) >= -EPS or max(signs) <= EPS
+
+
+def intersect_feasible_region(
+    stations: Sequence[Point],
+    bearings_deg: Sequence[float],
+    angle_half_width_deg: float = Q3_ANGLE_HALF_WIDTH_DEG,
+    arena_radius: float = Q3_ARENA_R,
+    positive_range_max: float = Q3_POSITIVE_RANGE_MAX,
+    circle_sides: int = Q3_CIRCLE_SIDES,
+) -> "IntersectionResult":
+    """Conservative convex outer envelope for Q3 positive observations.
+
+    Exact disks are replaced by circumscribed regular polygons. The result thus
+    contains every physically feasible source, so its enclosing circle is safe
+    for a clear certificate.
+    """
+    if len(stations) != len(bearings_deg):
+        raise ValueError("stations and bearings must have the same length")
+    polygon = _circumscribed_polygon((0.0, 0.0), arena_radius, circle_sides)
+    for station, bearing in zip(stations, bearings_deg):
+        for hp in cone_halfplanes(station, bearing, angle_half_width_deg):
+            polygon = clip_polygon_halfplane(polygon, hp)
+            if not polygon:
+                return IntersectionResult([], bounded=True, empty=True)
+        for hp in _disk_outer_halfplanes(station, positive_range_max, circle_sides):
+            polygon = clip_polygon_halfplane(polygon, hp)
+            if not polygon:
+                return IntersectionResult([], bounded=True, empty=True)
+    hull = convex_hull(polygon)
+    return IntersectionResult(hull, bounded=True, empty=not hull)
+
+
+def entirely_excluded_by_no_signal(
+    vertices: Sequence[Point],
+    no_signal_sites: Sequence[Point],
+    exclusion_radius: float = Q3_NO_SIGNAL_EXCLUSION_R,
+) -> bool:
+    """Detect a contradiction; never use this non-convex fact to certify a clear."""
+    return bool(vertices) and any(
+        all(dist(v, site) <= exclusion_radius + EPS for v in vertices)
+        for site in no_signal_sites
+    )
+
+
+def plausible_vertices_after_no_signal(
+    vertices: Sequence[Point],
+    no_signal_sites: Sequence[Point],
+    exclusion_radius: float = Q3_NO_SIGNAL_EXCLUSION_R,
+) -> list[Point]:
+    """Heuristic vertices outside every proven no-signal exclusion disk."""
+    return [
+        v
+        for v in vertices
+        if all(dist(v, site) > exclusion_radius + EPS for site in no_signal_sites)
+    ]
 
 @dataclass
 class IntersectionResult:
