@@ -1,0 +1,35 @@
+{
+  "target_s": 5000,
+  "mode": "practice_q4_only",
+  "formal_test": false,
+  "hard_rule": "Never click or start 正式测试. Only 开始问题4演练测试. Never 确认开始. Never Q3 during this loop.",
+  "stop_when": "last_10_mean_virtual_time_s <= 5000 and all 10 games full clear",
+  "baseline_5game_mean_s": 8789.4,
+  "current_best_official_mean_s": 8508.1,
+  "current_best_official_10_mean_s": 8508.1,
+  "versions": [
+    {
+      "id": "v_nofar",
+      "official_10_mean_s": 8508.1,
+      "official_10_all_clear": true
+    },
+    {
+      "id": "v_jung_nn",
+      "official_10_mean_s": 8553.3,
+      "official_10_all_clear": true
+    },
+    {
+      "id": "v_fan18m4",
+      "upgrade": "Skip FAN 18 m only after that channel already has 4 charged clear-misses. Keep skip-far-S2.",
+      "mock_8_mean_s": 9497.7,
+      "mock_80_mean_s": 6799.9,
+      "mock_80_miss": 0,
+      "official_10_mean_s": 9137.7,
+      "official_10_all_clear": true,
+      "official_10_min_s": 6400.7,
+      "official_10_max_s": 12364.3,
+      "note": "10/10. Worse mean than 8508 (all-dir tail 12.4k). Restored always-on fan 12+18. Do not retry fan18-after-4-miss."
+    }
+  ],
+  "next_upgrade": "Keep skip-far-S2 and fan 12+18 always. Do not retry fan18-after-4-miss, MAX_FIX 6, skip-enroute, skip-inner-after-enroute, uncharged 1/2, fan-12-only, creep 4/6, 4-empty abort, angular, UI n, S2 shrink, inner 8→6. Next: at each covering waypoint scan at most 10 unknown channels. Mock 80 0 miss before simulator."
+}
