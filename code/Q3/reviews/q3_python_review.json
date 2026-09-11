@@ -1,52 +1,70 @@
 {
-  "question": "Q3",
-  "review_id": "q3_python_review_step4_20260911",
-  "previous_review_id": "q3_python_review_steps2_3_20260911",
+  "schema_version": 1,
+  "question_id": "Q3",
+  "language": "python",
+  "review_id": "q3_python_review_step8_dev_20260911",
+  "previous_review_id": "q3_python_review_step8_smoke_20260911",
+  "decision_id": "q3_step7_accept_and_proceed_step8_20260911",
   "reviewed_files": [
     "code/Q3/q3_code_plan.md",
-    "src/coverage.py",
     "src/policy.py",
     "src/runner_q3.py",
-    "src/q3_optimized_policy.py",
     "src/q3_benchmark.py",
-    "src/tests/test_q3_step4.py",
-    "results/Q3/experiments/round4/metrics/candidate_metrics.json",
-    "results/Q3/experiments/round4/run_summary.json",
-    "robustness/Q3/q3_robustness_summary.json"
+    "src/tests/test_q3_step8.py",
+    "results/Q3/experiments/step8_smoke/default_off_3.json",
+    "results/Q3/experiments/step8_smoke/candidate_3.json",
+    "results/Q3/experiments/step8_smoke/run_summary.json",
+    "results/Q3/experiments/step8_dev/baseline_100_149.json",
+    "results/Q3/experiments/step8_dev/candidate_100_149.json",
+    "results/Q3/experiments/step8_dev/run_summary.json"
   ],
-  "verdict": "PASS",
-  "syntax": {
-    "status": "PASS",
-    "evidence": "Python 3.12 py_compile passed for the merged source set; unittest discovery: 55/55 PASS."
+  "checks": {
+    "syntax": {
+      "status": "PASS",
+      "evidence": ["Python 3.12 unittest discovery ran 73 tests with zero failures."]
+    },
+    "input_contract": {
+      "status": "PASS",
+      "evidence": [
+        "The candidate uses the existing local MockSim/RobotClient contract and requires an explicit benchmark or runner keyword flag.",
+        "No raw data, official interface, network endpoint, or formal-test input is accessed."
+      ]
+    },
+    "method_alignment": {
+      "status": "PASS",
+      "evidence": [
+        "Only Q3 clear-ready SEC centers are queued; each is assigned to the minimum-delta unexecuted backbone edge.",
+        "The eight-point backbone order and existing localization method remain unchanged; directional=True forcibly disables Step 8."
+      ]
+    },
+    "reproducibility": {
+      "status": "PASS",
+      "evidence": [
+        "The smoke uses deterministic seeds 0..2 plus the fixed 16-source boundary case and persists both baseline and candidate JSON outputs.",
+        "Default-off smoke is paired-zero against the Step 7 baseline for all reported key metrics.",
+        "The development comparison separately generated baseline and candidate results for independent seeds 100..149 and paired all 50 case IDs."
+      ]
+    },
+    "output_contract": {
+      "status": "PASS",
+      "evidence": [
+        "Benchmark output records explicit candidate enablement, per-case insertion records, insertion counts, fallbacks, planned deltas, and pending-ready state.",
+        "The development run summary records all-clear/protocol gates, paired mean/median/P90/worst/better-share, insertion/fallback counts, cost decomposition, and the G8 rejection while leaving the active baseline unchanged."
+      ]
+    }
   },
-  "input_contract": {
-    "status": "PASS",
-    "evidence": "RobotClient signatures and official transport remain unchanged. Q3 uses nine legal waypoints (centre plus eight ring points); the retained round3 benchmark reports zero rejected actions and accepted exits in 100 fixed cases plus the boundary case."
-  },
-  "method_alignment": {
-    "status": "PASS",
-    "evidence": "The merged Q3 non-directional policy retains the fastest centre plus eight-point inner ring. The six-point radius-1150 m, phase-10-degree route remains a separately verified candidate in round4 and is not active. Q4 retains its original eight-point inner ring and all outer points."
-  },
-  "reproducibility": {
-    "status": "PASS",
-    "evidence": "Round3 uses local_mock_full_disk_v1, seeds 0..99, the deterministic 16-source boundary case, Python 3.12, and persisted per-case JSON metrics. The merged runner_q3 entry point reproduces the same round3 metrics."
-  },
-  "output_contract": {
-    "status": "PASS",
-    "evidence": "Round2, round3, and the round4 candidate contain persisted metrics and run summaries. The merged baseline is round3; round4 remains an auditable rejected-on-time candidate with formal_test=false."
-  },
-  "regression": {
-    "status": "PASS",
-    "evidence": "55 tests cover remote Q4 behavior, Q1/Q2 geometry and candidates, Q3 steps 1-4 through the isolated q3_optimized_policy, malformed coverage routes, a five-point counterexample, the retained Q3 eight-ring route, and Q4 route isolation."
-  },
-  "performance_tradeoff": {
-    "status": "ACCEPTED_BASELINE",
-    "evidence": "The human selected the fastest round3 baseline: mean virtual time 5347.740961681709 s versus round4 six-point candidate 5441.466396980994 s. The six-point candidate reduces actions but is not merged as the active route."
-  },
-  "limitations": [
-    "Verdict is local-mock G3 evidence only.",
-    "No official practice or formal test was run.",
-    "The six-point route is retained only as evaluated candidate evidence; the merged Q3 route is the round3 eight-point baseline.",
-    "Step 5 and certified_absent are intentionally not claimed."
-  ]
+  "findings": [
+    {
+      "severity": "INFO",
+      "finding": "The independent development set rejects the candidate: mean +53.56 s, paired P90 +249.57 s, worst +448.20 s, and only 24% of cases improve.",
+      "disposition": "Keep the Step 7 default; do not run locked evaluation or Step 9 for this candidate."
+    },
+    {
+      "severity": "INFO",
+      "finding": "Independent per-task insertion deltas do not optimize the order of multiple tasks assigned to one edge.",
+      "disposition": "Keep this limitation for Step 8 isolation; multi-task local reordering belongs only to conditional Step 9."
+    }
+  ],
+  "verdict": "PASSED",
+  "reviewed_at": "2026-09-11T17:55:32.8490660+08:00"
 }

@@ -1,0 +1,62 @@
+{
+  "question": "Q3",
+  "round": "step5_completion",
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "engineering_baseline",
+  "status": "PASS",
+  "inputs": {
+    "branch": "dev",
+    "head": "cf9159f4aadc0fec8e62b1ae4a6bebdd71c86335",
+    "policy": "policy.HuntPolicy(directional=False) with Step5 guard port, action retries, exit retry, cost ledger",
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..79",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m"
+  },
+  "outputs": [
+    "results/Q3/experiments/step5_completion/q12_80_check.json",
+    "src/tests/test_q3_cost_ledger.py",
+    "src/tests/test_q3_step5.py"
+  ],
+  "metric_summary": {
+    "unit_tests": "66/66 PASS",
+    "random_all_clear": "80/80",
+    "mean_virtual_time_s": 5156.596150225186,
+    "bit_identical_to_remote_baseline": true,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 6897.4034962203405,
+    "boundary_pending_at_exit": 0,
+    "boundary_exit_accepted": true,
+    "cost_decomposition_mean": {
+      "travel_s": 4427.858650225185,
+      "detect_s": 553.25,
+      "switch_s": 108.8125,
+      "clear_ok_s": 63.749999999999964,
+      "clear_miss_s": 2.925000000000006
+    },
+    "cost_decomposition_share_pct": {
+      "travel": 85.87,
+      "detect": 10.73,
+      "switch": 2.11,
+      "clear_ok": 1.24,
+      "clear_miss": 0.06
+    },
+    "clear_miss_mean_per_case": 0.975,
+    "max_pending_at_exit": 0,
+    "max_invalid_actions": 0
+  },
+  "seed": "0..79",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "detect_s semantics changed: now pure 5s-per-measure detection; switch time moved to switch_s (historical output files keep old values).",
+    "Per-channel attribution convention: each action's travel and dwell are attributed to its target channel.",
+    "Only local mock evidence; no official practice run in this round."
+  ],
+  "fallback_trigger_state": "not_triggered"
+}

@@ -45,3 +45,22 @@
 - 次级指标：虚拟时间、动作数、测量数、方向数、顺路复测、专程补测定位；如只改善部分指标，必须明确报告权衡。
 - 产物：`results/Q3/experiments/round4/metrics/candidate_metrics.json`、`results/Q3/experiments/round4/run_summary.json`，并刷新 Q3 稳健性摘要和 Python 审查。
 - 第 4 步验收后停止，不进入第 5 步。
+
+## Step 8 最小实现契约：clear-ready 跨未来主干边插入
+
+- 授权依据：`q3_step7_accept_and_proceed_step8_20260911`；本单元只实现候选机制和小规模确定性验证，不进行 80 局、locked、官方演练或正式测试。
+- active baseline：Step 7 原策略（当前 `src/policy.py` 的 `HuntPolicy(directional=False)`），行为对照必须保留；`src/q3_optimized_policy.py` 不属于当前入口，不修改。
+- candidate 范围：仅处理 Q3 `directional=False` 且 `locate_quality(...)` 满足 `quality.can_clear_20`、`quality.sec_center` 合法并位于 Q3 场地内的 clear-ready 点 `C`。不改第二测站、全局 TSP、静态 `n/r/phase/CW-CCW` 或复杂权重。
+- 插入规则：对尚未执行的主干边 `(A,B)` 计算 `delta = d(A,C) + d(C,B) - d(A,B)`，选择未来主干中的最小 `delta`；已执行边不可回滚，覆盖航点不可跳过，服务完成后必须回到该边的 `B` 端再继续主干。
+- 调度状态：显式保存剩余主干边、已执行航点和已服务频道；同一频道不得重复 clear，未清频道不得从 pending 丢失；`directional=True` 不启用插入逻辑。
+- 最小验证：单测覆盖插入代价公式/选边、不跳过覆盖航点、已清频道不重复，以及 directional 分支不采用插入；另做一个很小的确定性 smoke。不得以 smoke 结果宣称候选已采用或性能已改善。
+- 产物门槛：若确有执行，最多生成 `results/Q3/experiments/step8_smoke/run_summary.json`，标明 candidate 未经 80/locked 验收且 active baseline 未切换；manifest 只可推进到 `implementation_ready_for_dev_eval`，不可标记 Step 8 完成。
+- 后续验收：必须在独立 paired development/locked 集上证明 all-clear、协议与 P90 不退化后，才可考虑切换 baseline 或申请官方演练；本单元不进入 Step 9。
+- 数据隔离：benchmark 必须显式使用 `--seed-start` 固定新 seed 区间；development 建议 `100..149`，locked 建议 `1000..1099`。先分别生成同区间 default-off baseline，再以 candidate 对该文件做 paired 比较，禁止拿历史 `0..79` 直接充当独立验证。
+
+## Step 8 开发集验收结果
+
+- 独立 development seeds `100..149` 已成对完成；基线与候选均 50/50 全清且协议指标正常。
+- 候选相对基线均值慢 `53.5613 s`（`+1.0576%`），成对 P90 差 `+249.5687 s`，最坏回退 `+448.1996 s`，仅 24% case 更快。
+- G8 的 mean 改善与尾部门槛失败，因此候选保持默认关闭，不运行 locked seeds `1000..1099`，不进入 Step 9。
+- 当前 active baseline 仍是 Step 7 策略；后续若要冻结、官方演练或路线切换，均需单独授权。

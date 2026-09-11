@@ -1,0 +1,69 @@
+{
+  "question": "Q3",
+  "round": "step7_clear_audit",
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "diagnostic_audit",
+  "status": "PASS",
+  "inputs": {
+    "branch": "dev",
+    "head": "cf9159f4aadc0fec8e62b1ae4a6bebdd71c86335",
+    "policy": "policy.HuntPolicy(directional=False) with clear-source tagging in _try_clear",
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..79",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m"
+  },
+  "outputs": [
+    "results/Q3/experiments/step7_clear_audit/q12_80.json",
+    "src/tests/test_q3_cost_ledger.py"
+  ],
+  "metric_summary": {
+    "unit_tests": "69/69 PASS",
+    "random_all_clear": "80/80",
+    "mean_virtual_time_s": 5156.596150225186,
+    "bit_identical_to_remote_baseline": true,
+    "boundary_all_clear": "16/16",
+    "clear_audit_80_case_totals": {
+      "sec_center": {
+        "attempts": 393,
+        "success": 393,
+        "miss": 0,
+        "success_rate_pct": 100.0,
+        "travel_s": 44326.36736207907
+      },
+      "bearing": {
+        "attempts": 705,
+        "success": 627,
+        "miss": 78,
+        "success_rate_pct": 88.94,
+        "travel_s": 106728.14761599369,
+        "miss_travel_s": 12797.058232632602
+      }
+    },
+    "inactive_bypasses_in_80_random_cases": [
+      "sec_along", "scan_near", "near_pos", "behind_lobe", "second_station",
+      "measure_fallback", "creep_near", "creep_behind_lobe", "creep_last",
+      "creep_closer", "probe", "probe_near", "probe_dir", "probe_along", "fan"
+    ],
+    "estimated_bearing_miss_cost_per_case_s": 163.0,
+    "boundary_audit": {
+      "sec_center": {"attempts": 8, "success": 8},
+      "bearing": {"attempts": 8, "success": 8}
+    }
+  },
+  "seed": "0..79",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "sec_center is the SEC-gated path (R_sec<=20 m): 100% success, R_gate=20 m retained; no evidence for tightening margin.",
+    "bearing (ray-pair intersection) carries 61.5% of successful clears but all 78 misses; tightening is a candidate optimization, not yet applied.",
+    "Inactive bypasses fire zero times in normal random play; they remain as dormant fallbacks (creep etc.) and were not removed.",
+    "Only local mock evidence."
+  ],
+  "fallback_trigger_state": "not_triggered"
+}

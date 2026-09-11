@@ -1,0 +1,67 @@
+{
+  "question": "Q3",
+  "round": "step6_move_split",
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "baseline_benchmark",
+  "status": "PASS",
+  "inputs": {
+    "branch": "dev",
+    "head": "cf9159f4aadc0fec8e62b1ae4a6bebdd71c86335",
+    "policy": "policy.HuntPolicy(directional=False) with move-context instrumentation",
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..79",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "paired_baseline": "results/Q3/experiments/step5_completion/q12_80_check.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/step6_move_split/q12_80.json",
+    "src/tests/test_q3_cost_ledger.py"
+  ],
+  "metric_summary": {
+    "unit_tests": "68/68 PASS",
+    "random_all_clear": "80/80",
+    "mean_virtual_time_s": 5156.596150225186,
+    "bit_identical_to_remote_baseline": true,
+    "boundary_all_clear": "16/16",
+    "paired_delta_all_zero": true,
+    "move_decomposition_mean_s": {
+      "backbone_scan_s": 1749.8502263010444,
+      "backbone_planned_s": 1463.821616703557,
+      "backbone_rejoin_s": 286.0286095974871,
+      "localization_s": 789.8269866982318,
+      "clear_detour_s": 1888.1814372259091,
+      "total_s": 4427.858650225185
+    },
+    "move_share_of_virtual_time_pct": {
+      "backbone_planned": 28.39,
+      "backbone_rejoin": 5.55,
+      "localization": 15.32,
+      "clear_detour": 36.62
+    },
+    "per_source_mean": {
+      "travel_s": 349.77418777937544,
+      "service_move_s": 209.9912234219374,
+      "clear_detour_s": 148.05138078313323,
+      "localization_move_s": 61.93984263880418,
+      "clear_miss": 0.07547509781884781,
+      "dedicated_localizations": 0.35800335081585083
+    },
+    "max_pending_at_exit": 0,
+    "max_invalid_actions": 0
+  },
+  "seed": "0..79",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "backbone_scan includes the full approach into a waypoint, so backbone_rejoin is the signed excess over the planned tour polyline.",
+    "clear_detour is travel issued by /clear actions (moving to SEC centers, bearing fixes, creep clears), the single largest travel bucket.",
+    "Only local mock evidence."
+  ],
+  "fallback_trigger_state": "not_triggered"
+}

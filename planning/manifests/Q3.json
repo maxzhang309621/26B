@@ -1,13 +1,25 @@
 {
   "question": "Q3",
   "title": "全向干扰源快速定位与清除优化",
-  "status": "STEP4_BASELINE_RETAINED",
+  "status": "Q3_STEP8_EVALUATED_REJECTED_BASELINE_RETAINED",
   "current_gate": "G3",
   "profile": "lean",
   "main_candidate": "M2_triangulation_first",
   "usable_baseline": "M1_current_creep_first",
   "conditional_fallback": "F1_bounded_creep",
   "formal_test_allowed": false,
-  "next_unit": "await_human_step5_authorization",
-  "updated_at": "2026-09-11T12:18:34.6014112+08:00"
+  "next_unit": "freeze_step7_active_baseline_requires_authorization",
+  "notes": [
+    "dev branch merged from GitHub (cf9159f); Q3 lives in src/policy.py with Q1 locate_quality and Q2 next_stations.",
+    "Old Step 5 completed: deadline guard + exit reserve + action/exit retries (MAX_ACTION_ATTEMPTS=2) + terminal states; 66/66 tests pass.",
+    "Cost ledger in action_stats: travel/detect/switch/clear_ok/clear_miss/per_channel. 80-seed mean decomposition: travel 4427.86s (85.87%), detect 553.25s, switch 108.81s, clear_ok 63.75s, clear_miss 2.93s.",
+    "Step 6 move split done: backbone_planned 1463.82s (28.39%), rejoin 286.03s (5.55%), localization 789.83s (15.32%), clear_detour 1888.18s (36.62%, largest bucket). Paired-delta infra in q3_benchmark --baseline.",
+    "Step 7 clear audit done: sec_center 393/393 (100%), bearing 627/705 (88.94%, carries 61.5% of clears); 15 other bypass paths fire 0 times in 80 random cases.",
+    "Step 7b bearing gate tested and rejected: net mean gain 1.48s/case (0.0287%) with boundary regression +20.52s. Step 7c restored the active policy bit-identically.",
+    "Human accepted Step 7 and authorized Step 8 on 2026-09-11; fresh closeout regression 69/69 PASS. Step 8 remains an explicit opt-in candidate and is not the active policy.",
+    "Step 8 candidate implemented behind an explicit default-off flag. Three-case smoke and the boundary case all clear; default-off is paired-identical to Step 7.",
+    "Step 8 independent paired development seeds 100..149 completed: both policies 50/50 all-clear with clean protocol exits, but candidate mean regressed by 53.56s (+1.0576%), paired P90 by 249.57s, worst by 448.20s, and only 24% cases improved. G8 rejected; locked evaluation and Step 9 are not warranted.",
+    "Baselines: local mock 80 seeds 5156.596150225186 s bit-identical; official practice 10/10 clear mean 5245.36 s."
+  ],
+  "updated_at": "2026-09-11T17:55:32.8490660+08:00"
 }
