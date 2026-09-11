@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from policy import HuntPolicy
+from q3_optimized_policy import HuntPolicy
 from robot_client import RobotClient
 
 

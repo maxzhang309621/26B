@@ -72,6 +72,15 @@ def _run_case(case_id: str, sources: list[Source]) -> dict[str, Any]:
         "clear_count": clear_count,
         "creep_calls": stats.get("creep_calls"),
         "creep_steps": stats.get("creep_steps"),
+        "inconsistent_regions": stats.get("inconsistent_regions", 0),
+        "route_rechecks": stats.get("route_rechecks", 0),
+        "route_recheck_hits": stats.get("route_recheck_hits", 0),
+        "deferred_channels": stats.get("deferred_channels", 0),
+        "dedicated_localizations": stats.get("dedicated_localizations", 0),
+        "localization_services": stats.get("localization_services", 0),
+        "pending_at_exit": stats.get("pending_at_exit", 0),
+        "invalid_action_count": sum(rec["response"].get("accepted") is not True for rec in bot.log),
+        "exit_accepted": bot.log[-1]["path"] == "/exit" and bot.log[-1]["response"].get("accepted") is True,
         "channels": stats["channels"],
     }
 
@@ -94,7 +103,7 @@ def _aggregate(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "all_clear_cases": sum(case["all_cleared"] for case in cases),
         "failed_case_ids": [case["case_id"] for case in cases if not case["all_cleared"]],
     }
-    for key in ("virtual_time_s", "action_count", "measure_count", "direction_count", "clear_count", "creep_calls", "creep_steps"):
+    for key in ("virtual_time_s", "action_count", "measure_count", "direction_count", "clear_count", "creep_calls", "creep_steps", "inconsistent_regions", "route_rechecks", "route_recheck_hits", "deferred_channels", "dedicated_localizations", "localization_services", "pending_at_exit", "invalid_action_count"):
         values = [float(case[key]) for case in cases if case[key] is not None]
         metrics[key] = {
             "mean": statistics.fmean(values),
@@ -133,7 +142,19 @@ def main() -> int:
         "boundary_case": boundary,
         "output": str(args.output),
     }, ensure_ascii=False, indent=2))
-    return 0 if result["random_summary"]["all_clear_cases"] == args.cases and boundary["all_cleared"] else 1
+    random_ok = (
+        result["random_summary"]["all_clear_cases"] == args.cases
+        and result["random_summary"]["pending_at_exit"]["max"] == 0
+        and result["random_summary"]["invalid_action_count"]["max"] == 0
+        and all(case["exit_accepted"] for case in random_cases)
+    )
+    boundary_ok = (
+        boundary["all_cleared"]
+        and boundary["pending_at_exit"] == 0
+        and boundary["invalid_action_count"] == 0
+        and boundary["exit_accepted"]
+    )
+    return 0 if random_ok and boundary_ok else 1
 
 
 if __name__ == "__main__":
