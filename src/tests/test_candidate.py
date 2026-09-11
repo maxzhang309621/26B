@@ -7,11 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from candidate import (
+    Y_MIN,
     from_body,
+    front_compatible,
     in_candidate_region,
     intersection_angle_deg,
+    next_stations,
     recommend_second,
     recommend_second_sides_compact,
+    to_body,
 )
 from geometry import add, dist, scale, unit
 
@@ -49,3 +53,32 @@ class TestCandidate(unittest.TestCase):
         self.assertLess(dist(a, s1), dist(far, s1))
         self.assertLess(dist(b, s1), dist(far, s1))
         self.assertGreater(dist(a, s1), 400.0)
+
+    def test_next_stations_reject_along_bearing(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        pts = next_stations(s1, th, now=s1, directional=False)
+        self.assertTrue(pts)
+        along = add(s1, scale(unit(th), 800.0))
+        self.assertFalse(in_candidate_region(s1, th, along))
+        g = (900.0, 0.0)
+        pref = pts[0]
+        ang = intersection_angle_deg(s1, pref, g)
+        self.assertGreaterEqual(ang, 60.0)
+        self.assertLessEqual(ang, 120.0)
+        for p in pts:
+            _x, y = to_body(s1, th, p)
+            self.assertGreaterEqual(abs(y), Y_MIN - 1e-6)
+
+    def test_next_stations_directional_front_only(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        along = from_body(s1, th, 900.0, 0.0)
+        self.assertGreaterEqual(abs(to_body(s1, th, along)[1]), 0.0)
+        pts = next_stations(s1, th, now=s1, directional=True)
+        self.assertTrue(pts)
+        for p in pts:
+            self.assertTrue(front_compatible(s1, th, p))
+            _x, y = to_body(s1, th, p)
+            self.assertGreaterEqual(abs(y), 400.0 - 1e-6)
+            self.assertNotIn(p, next_stations(s1, th, directional=True, silence=[p]))

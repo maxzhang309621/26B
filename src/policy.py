@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
-from geometry import Point, add, cross, dist, intersect_cones, scale, smallest_enclosing_circle, sub, unit
-from candidate import recommend_second, recommend_second_sides_compact
+from geometry import (
+    Point,
+    add,
+    cross,
+    dist,
+    intersect_cones,
+    locate_quality,
+    scale,
+    smallest_enclosing_circle,
+    sub,
+    unit,
+)
+from candidate import next_stations
 from belief import ChannelBook, Detection, R_RULE_OUT
 from coverage import ENROUTE_R, covering_phases, directional_waypoints, omni_waypoints
 from robot_client import RobotClient
@@ -397,6 +408,18 @@ class HuntPolicy:
             used = _diverse_obs(obs, 4)
             stations = [d.xy for d in used]
             bearings = [d.svd_deg for d in used]
+            quality = locate_quality(
+                stations,
+                bearings,
+                silence=self.book.silent_at.get(ch),
+            )
+            if quality.can_clear_20 and quality.sec_center is not None:
+                if self._try_clear(quality.sec_center, ch, charge=False):
+                    return
+                last = obs[-1]
+                along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+                if self._try_clear(along, ch, charge=False):
+                    return
             region = intersect_cones(stations, bearings)
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
@@ -433,12 +456,24 @@ class HuntPolicy:
         return False
 
     def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
+        from candidate import recommend_second, recommend_second_sides_compact
+
         compact = list(recommend_second_sides_compact(s1, th))
         compact.sort(key=lambda p: dist(p, self.bot.position))
         ordered = compact
         if not self.directional:
             pref = recommend_second(s1, th, now=self.bot.position)
             ordered = [pref] + [p for p in compact if dist(p, pref) > 5.0]
+        extra = next_stations(
+            s1,
+            th,
+            now=self.bot.position,
+            directional=self.directional,
+            silence=self.book.silent_at.get(ch),
+        )
+        for p in extra:
+            if all(dist(p, q) > 5.0 for q in ordered):
+                ordered.append(p)
         for s2 in ordered:
             if dist(s2, s1) <= 5.0:
                 continue

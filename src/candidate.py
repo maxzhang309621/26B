@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from typing import Sequence
+
 from geometry import Point, add, dist, dot, scale, sub, unit
 
 ARENA_R = 1800.0
@@ -155,6 +157,82 @@ def recommend_second(
         if r > ARENA_R:
             best = scale(best, ARENA_R / r)
     return best
+
+
+def front_compatible(s1: Point, theta_deg: float, p: Point, rho_g: float | None = None) -> bool:
+    """True if P can still lie in the 180° front half-plane of a source on the ray.
+
+    Heard-at-S1 forces the unknown heading to include S1. P is compatible when it
+    sits on the S1 side of the perpendicular through a guess G on the bearing.
+    """
+    x, _y = to_body(s1, theta_deg, p)
+    if rho_g is None:
+        rho_g = max(x + 80.0, 250.0)
+    g = from_body(s1, theta_deg, rho_g, 0.0)
+    return dot(sub(p, g), sub(s1, g)) >= -1.0
+
+
+def next_stations(
+    s1: Point,
+    theta_deg: float,
+    now: Point | None = None,
+    directional: bool = False,
+    silence: Sequence[Point] | None = None,
+) -> list[Point]:
+    """Legal second stations: off the bearing, 60–120° if possible; empty if none.
+
+    Directional mode rejects far orthogonal points that sit behind the first lobe.
+    """
+    now = now if now is not None else s1
+    raw: list[Point] = []
+    if directional:
+        compact = list(recommend_second_sides_compact(s1, theta_deg))
+        raw.extend(compact)
+        extras: list[Point] = []
+        for rho, h in ((320.0, 400.0), (400.0, 450.0)):
+            extras.extend(
+                (
+                    _clip_arena(from_body(s1, theta_deg, rho, h)),
+                    _clip_arena(from_body(s1, theta_deg, rho, -h)),
+                )
+            )
+        g_hat = from_body(s1, theta_deg, 800.0, 0.0)
+        for p in extras:
+            ang = intersection_angle_deg(s1, p, g_hat)
+            if 55.0 <= ang <= 125.0:
+                raw.append(p)
+    else:
+        pref = recommend_second(s1, theta_deg, now=now)
+        rest = [p for p in recommend_second_sides_compact(s1, theta_deg) if dist(p, pref) > 5.0]
+        ordered_omni = [pref] + rest
+        out_omni: list[Point] = []
+        for p in ordered_omni:
+            if dist(p, s1) <= 5.0:
+                continue
+            _x, y = to_body(s1, theta_deg, p)
+            if abs(y) < Y_MIN - 1e-6:
+                continue
+            if silence and any(dist(p, q) < 35.0 for q in silence):
+                continue
+            if all(dist(p, q) > 5.0 for q in out_omni):
+                out_omni.append(p)
+        return out_omni
+
+    scored: list[tuple[int, float, Point]] = []
+    for p in raw:
+        if dist(p, s1) <= 5.0:
+            continue
+        _x, y = to_body(s1, theta_deg, p)
+        if abs(y) < Y_MIN - 1e-6:
+            continue
+        if silence and any(dist(p, q) < 35.0 for q in silence):
+            continue
+        if any(dist(p, q) <= 5.0 for _, _, q in scored):
+            continue
+        front = 0 if (not directional or front_compatible(s1, theta_deg, p)) else 1
+        scored.append((front, dist(p, now), p))
+    scored.sort()
+    return [p for _, _, p in scored]
 
 
 def intersection_angle_deg(s1: Point, s2: Point, g: Point) -> float:

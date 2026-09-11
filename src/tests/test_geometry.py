@@ -7,10 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from geometry import (
+    CLEAR_R,
     diameter_circle_covers,
     dist,
     intersect_cones,
     jung_bound,
+    locate_quality,
     polygon_diameter,
     smallest_enclosing_circle,
     unit,
@@ -66,6 +68,40 @@ class TestGeometry(unittest.TestCase):
         s2 = (10.0, 0.0)
         res = intersect_cones([s1, s2], [90.0, 90.0], delta_deg=1.0)
         self.assertTrue(res.empty or (not res.bounded) or res.diameter == float("inf"))
+
+    def test_locate_quality_clears_tight_fix(self):
+        s1 = (0.0, 0.0)
+        s2 = (400.0, 0.0)
+        g = (200.0, 0.0)
+        th1 = math.degrees(math.atan2(g[1] - s1[1], g[0] - s1[0]))
+        th2 = math.degrees(math.atan2(g[1] - s2[1], g[0] - s2[0]))
+        # Same east-west line: collinear bearings should not claim 20 m clear.
+        q = locate_quality([s1, s2], [0.0, 180.0])
+        self.assertTrue(q.need_another_fix)
+        self.assertFalse(q.can_clear_20)
+        self.assertTrue(q.near_collinear)
+
+        g = (200.0, 300.0)
+        th1 = math.degrees(math.atan2(g[1] - s1[1], g[0] - s1[0]))
+        th2 = math.degrees(math.atan2(g[1] - s2[1], g[0] - s2[0]))
+        q2 = locate_quality([s1, s2], [th1, th2])
+        self.assertFalse(q2.near_collinear)
+        self.assertIsNotNone(q2.sec_center)
+        self.assertEqual(q2.can_clear_20, q2.sec_radius <= CLEAR_R)
+        self.assertEqual(q2.need_another_fix, not q2.can_clear_20)
+
+    def test_locate_quality_silence_blocks_center(self):
+        s1 = (0.0, 0.0)
+        s2 = (400.0, 0.0)
+        g = (200.0, 300.0)
+        th1 = math.degrees(math.atan2(g[1] - s1[1], g[0] - s1[0]))
+        th2 = math.degrees(math.atan2(g[1] - s2[1], g[0] - s2[0]))
+        q = locate_quality([s1, s2], [th1, th2])
+        if q.sec_center is None:
+            self.skipTest("unexpected empty fix")
+        q2 = locate_quality([s1, s2], [th1, th2], silence=[q.sec_center])
+        self.assertTrue(q2.need_another_fix)
+        self.assertFalse(q2.can_clear_20)
 
     def test_unit_vector_east_north(self):
         e = unit(0.0)

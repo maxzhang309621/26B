@@ -62,3 +62,11 @@ python q1_cli.py
 ```
 
 合计 17 tests OK。
+
+## T9–T11 问题 1/2 质量接口回灌（2026-09-11，`feat/q12-locate-kernel`）
+
+- `locate_quality`：近共线禁止伪清除；`can_clear_20` 仅比最小包围圆与 20 m；圆心落在无信号 1000 m 内则再测。
+- `next_stations` / `front_compatible`：全向先正交推荐点；定向先紧凑两侧，前瓣点优先，交角过差的近点丢弃。
+- `HuntPolicy`：两站以上先问 `can_clear_20`；第二站列表接 `next_stations`，空则回退原 compact/recommend。
+- 冒烟：`python -m unittest tests.test_geometry tests.test_candidate tests.test_q3 tests.test_q4 tests.test_protocol tests.test_practice_guard -q` → 38 passed。
+- 未做：官方演练对照（步骤 F）；正式测试禁止。

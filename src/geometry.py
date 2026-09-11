@@ -380,3 +380,59 @@ def diameter_circle_covers(vertices: Sequence[Point]) -> bool:
 
 def jung_bound(diameter: float) -> float:
     return diameter / math.sqrt(3.0)
+
+
+CLEAR_R = 20.0
+# Two unit bearings with |sin β| below this are treated as near-collinear.
+COLLINEAR_SIN = 0.08
+# svd_deg is two decimals; keep the feasible set slightly fat.
+DELTA_ROUNDING_DEG = 1.01
+
+
+@dataclass
+class LocateQuality:
+    """Problem-1 quality used by problems 3/4. Never use diameter<=40 to clear."""
+
+    region: IntersectionResult
+    sec_center: Point | None
+    sec_radius: float
+    can_clear_20: bool
+    need_another_fix: bool
+    near_collinear: bool
+
+
+def _near_collinear(bearings_deg: Sequence[float]) -> bool:
+    if len(bearings_deg) < 2:
+        return True
+    us = [unit(th) for th in bearings_deg]
+    best = 0.0
+    for i, a in enumerate(us):
+        for b in us[i + 1 :]:
+            best = max(best, abs(cross(a, b)))
+    return best < COLLINEAR_SIN
+
+
+def locate_quality(
+    stations: Sequence[Point],
+    bearings_deg: Sequence[float],
+    delta_deg: float = 1.0,
+    silence: Sequence[Point] | None = None,
+    rule_out_r: float = 1000.0,
+) -> LocateQuality:
+    """Classify a multi-station AOA fix: clearable at 20 m, or need another station."""
+    empty_reg = IntersectionResult([], bounded=True, empty=True)
+    if len(stations) < 2:
+        return LocateQuality(empty_reg, None, float("inf"), False, True, True)
+    collinear = _near_collinear(bearings_deg)
+    region = intersect_cones(stations, bearings_deg, delta_deg=delta_deg)
+    if region.empty or not region.bounded or len(region.vertices) < 2:
+        return LocateQuality(region, None, float("inf"), False, True, collinear)
+    if collinear:
+        return LocateQuality(region, None, float("inf"), False, True, True)
+    cen, rad = smallest_enclosing_circle(region.vertices)
+    if silence:
+        for q in silence:
+            if dist(cen, q) <= rule_out_r + 1e-9:
+                return LocateQuality(region, cen, rad, False, True, False)
+    can = rad <= CLEAR_R + 1e-9
+    return LocateQuality(region, cen, rad, can, need_another_fix=not can, near_collinear=False)

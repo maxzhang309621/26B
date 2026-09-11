@@ -125,3 +125,17 @@
 | T8 | HTTP 传输、配置、动作日志导出（正式测试用） | 8–9 | 附件 2 §12 |
 
 实现顺序：T1 → T2 → T3 → T4 → T5 → T6 / T7（可并行）→ T8。
+
+## 变更 v1.1（步骤 A–F）
+
+- **A 问题 1 质量**：`locate_quality` = 半平面交 + Welzl + 近共线检测（\(|\sin\beta|<0.08\)）；`can_clear_20` 只用包围圆半径，角扇余量 1.01°。
+- **B 无信号裁剪**：包围圆圆心落在某 `no_signal` 点 1000 m 内则禁止清除、要求再测。
+- **C 问题 2 下一站**：`next_stations`；全向保留正交推荐；定向只用前瓣兼容的近侧点，可返回空列表。
+- **D/E 接线**：`HuntPolicy._localize_and_clear` / `_take_second_fix` 只走上述接口。
+- **F 演练**：本任务只做 mock/单测；演练另开，禁止正式测试。
+
+| 任务 ID | 实现内容 | 关联步骤 |
+|---------|----------|----------|
+| T9 | `locate_quality` + 单测 | A, B |
+| T10 | `next_stations` / `front_compatible` + 单测 | C |
+| T11 | `policy` 接线 + Q3/Q4 mock 回归 | D, E |
