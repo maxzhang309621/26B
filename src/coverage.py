@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Sequence
 
-from geometry import Point, dist
+from geometry import Point, convex_hull, dist, point_in_convex_polygon
 
 ARENA_R = 1800.0
 COVER_R = 1000.0
+# Q3 omnidirectional ring
 OMNI_RING_R = 1200.0
 OMNI_RING_N = 8
 Q3_RING_R = 1150.0
@@ -16,15 +18,23 @@ Q3_RING_N = 6
 Q3_RING_PHASE_DEG = 10.0
 MID_RING_R = 900.0
 MID_RING_N = 0
-OUTER_RING_R = 2100.0
+# Q4 directional certificate route: origin + 8×995 + 12×1865 (= 21)
+Q4_INNER_R = 995.0
+Q4_INNER_N = 8
+OUTER_RING_R = 1865.0  # arena 1800 + 65 m for boundary outward sources
 OUTER_RING_N = 12
 Q4_OUTER_FULL_R = OUTER_RING_R
 Q4_OUTER_FULL_N = OUTER_RING_N
-Q4_OUTER_LITE_R = 1900.0
-Q4_OUTER_LITE_N = 11
+Q4_OUTER_LITE_R = 1865.0
+Q4_OUTER_LITE_N = 12
 Q4_DIR_FULL_OUTER_MIN = 8
-ENROUTE_R = 900.0
-INNER_R_MAX = 1550.0  # origin / 1200 m ring / optional mid ring vs outer ring
+ENROUTE_R = 900.0  # legacy Q3-era mid stop; unused on Q4 995+1865 route
+INNER_R_MAX = 1400.0  # split inner 995 vs outer 1865
+Q4_SPIRAL_PITCH = 800.0
+Q4_SPIRAL_STEP = 500.0
+Q4_SPIRAL_R0 = 400.0
+Q4_SPIRAL_OUTER_LAPS = 1.0
+CERT_MIN_CELL = 1800.0 / 64.0  # 28.125 m uniform leaf size
 
 
 def pick_q4_outer_ring(
@@ -36,19 +46,14 @@ def pick_q4_outer_ring(
 ) -> tuple[float, int]:
     """Pick outer ring after /enter (Q4-only; not Q3 route logic).
 
-    pure=False (v2):
-      - 0 directional → skip outer
-      - directional >= 8 → 12×2100
-      - else → 11×1900
-    pure=True: only dir>=6 full else lite (always keep outer ring).
+    Default certificate route keeps 12×1865. Dynamic profiles may still skip
+    the outer ring when there are zero directional sources.
     """
     if dir_n is None or omni_n is None:
         return Q4_OUTER_FULL_R, Q4_OUTER_FULL_N
     if not pure and dir_n <= 0:
         return Q4_OUTER_LITE_R, 0
-    if dir_n >= Q4_DIR_FULL_OUTER_MIN:
-        return Q4_OUTER_FULL_R, Q4_OUTER_FULL_N
-    return Q4_OUTER_LITE_R, Q4_OUTER_LITE_N
+    return Q4_OUTER_FULL_R, Q4_OUTER_FULL_N
 
 
 def omni_waypoints(ring_r: float = OMNI_RING_R, n: int = OMNI_RING_N) -> list[Point]:
@@ -74,20 +79,204 @@ def directional_waypoints(
     mid_r: float = MID_RING_R,
     mid_n: int = MID_RING_N,
 ) -> list[Point]:
-    """Omni inner cover plus one outer ring.
+    """Q4 cover skeleton: origin + 8×995 + 12×1865 (optional mid unused).
 
-    Near-center outward sources (r_eff=1000 m) are heard by a 900 m stop on
-    the way to the 1200 m inner ring (policy), not a separate mid ring.
-    A 12-point ring at 2100 m keeps a listen in the 180° front half-plane.
-    Q4 inner stays origin + 8×1200 m (6 inner fails directional_front_cover_ok).
+    Geometry matches the directional convex-hull certificate: any source in the
+    arena that lies in the convex hull of nearby (≤1000 m) listens is heard
+    for every 180° heading. Outer ring sits 65 m outside the arena so
+    boundary-outward sources still have a front-halfplane listen.
     """
-    pts = list(inner if inner is not None else omni_waypoints())
+    pts = list(inner if inner is not None else omni_waypoints(Q4_INNER_R, Q4_INNER_N))
     if mid_n > 0:
         pts.extend(_ring(mid_r, mid_n))
     for k in range(outer_n):
         a = 2.0 * math.pi * k / outer_n
         pts.append((outer_r * math.cos(a), outer_r * math.sin(a)))
     return pts
+
+
+def _archimedean_q4_points(
+    r_max: float = Q4_OUTER_FULL_R,
+    pitch: float = Q4_SPIRAL_PITCH,
+    step: float = Q4_SPIRAL_STEP,
+    r0: float = Q4_SPIRAL_R0,
+    outer_laps: float = Q4_SPIRAL_OUTER_LAPS,
+) -> list[Point]:
+    """Origin to r_max along r = bθ, then continue one lap on the r_max circle."""
+    b = pitch / (2.0 * math.pi)
+    pts: list[Point] = [(0.0, 0.0)]
+    theta = r0 / b
+    last = pts[0]
+    dth = 0.008
+    while True:
+        r = min(b * theta, r_max)
+        p = (r * math.cos(theta), r * math.sin(theta))
+        if dist(p, last) >= step:
+            pts.append(p)
+            last = p
+        if b * theta >= r_max:
+            break
+        theta += dth
+    theta0 = theta
+    while theta - theta0 < 2.0 * math.pi * outer_laps:
+        p = (r_max * math.cos(theta), r_max * math.sin(theta))
+        if dist(p, last) >= step:
+            pts.append(p)
+            last = p
+        theta += dth
+    return pts
+
+
+def _front_cover_holds(
+    waypoints: Sequence[Point],
+    cover_r: float = COVER_R,
+    arena_r: float = ARENA_R,
+) -> bool:
+    """Sampled directional cover (legacy). Prefer ``directional_hull_cover_ok``."""
+    headings = [i * 15.0 for i in range(24)]
+    for g in _sample_disk(arena_r, n_radial=6, n_ang=48):
+        for h in headings:
+            if not any(
+                dist(w, g) <= cover_r + 1e-6 and _in_front_halfplane(g, h, w)
+                for w in waypoints
+            ):
+                return False
+    return True
+
+
+def directional_hull_cover_at(
+    g: Point,
+    waypoints: Sequence[Point],
+    cover_r: float = COVER_R,
+) -> bool:
+    """True iff g lies in conv({w : ||w-g|| ≤ cover_r}).
+
+    Equivalent to: every 180° emission heading has a listen in its front
+    half-plane among the nearby waypoints (separating-hyperplane argument).
+    """
+    near = [w for w in waypoints if dist(w, g) <= cover_r + 1e-9]
+    if len(near) < 3:
+        return False
+    hull = convex_hull(near)
+    if len(hull) < 3:
+        return False
+    return point_in_convex_polygon(g, hull)
+
+
+def directional_hull_cover_ok(
+    waypoints: Sequence[Point] | None = None,
+    cover_r: float = COVER_R,
+    arena_r: float = ARENA_R,
+) -> bool:
+    """Sampled check of the convex-hull directional criterion over the arena."""
+    wps = list(waypoints if waypoints is not None else directional_waypoints())
+    return all(
+        directional_hull_cover_at(g, wps, cover_r=cover_r)
+        for g in _sample_disk(arena_r, n_radial=8, n_ang=72)
+    )
+
+
+def _cell_corners(xmin: float, ymin: float, xmax: float, ymax: float) -> list[Point]:
+    return [
+        (xmin, ymin),
+        (xmin, ymax),
+        (xmax, ymin),
+        (xmax, ymax),
+    ]
+
+
+def _cell_outside_arena(xmin: float, ymin: float, xmax: float, ymax: float, arena_r: float) -> bool:
+    # Closest point of axis-aligned square to origin.
+    cx = 0.0 if xmin <= 0.0 <= xmax else (xmin if xmin > 0.0 else xmax)
+    cy = 0.0 if ymin <= 0.0 <= ymax else (ymin if ymin > 0.0 else ymax)
+    return dist((cx, cy), (0.0, 0.0)) > arena_r + 1e-9
+
+
+def _cell_leaf_ok(
+    xmin: float,
+    ymin: float,
+    xmax: float,
+    ymax: float,
+    waypoints: Sequence[Point],
+    cover_r: float,
+    arena_r: float,
+) -> bool:
+    """Finest-cell check: hull criterion at center + in-arena corners."""
+    cx = 0.5 * (xmin + xmax)
+    cy = 0.5 * (ymin + ymax)
+    probes = [(cx, cy)] + [
+        c for c in _cell_corners(xmin, ymin, xmax, ymax) if dist(c, (0.0, 0.0)) <= arena_r + 1e-9
+    ]
+    return all(directional_hull_cover_at(g, waypoints, cover_r=cover_r) for g in probes)
+
+
+def build_directional_certificate(
+    waypoints: Sequence[Point] | None = None,
+    *,
+    arena_r: float = ARENA_R,
+    cover_r: float = COVER_R,
+    min_cell: float = CERT_MIN_CELL,
+) -> dict:
+    """Quadtree certificate for the directional convex-hull cover criterion.
+
+    Uniformly refines the arena-boxed square to ``min_cell`` (~28 m). Each leaf
+    whose center lies in the arena is checked by ``g ∈ conv(S_g)``. With the
+    default 21-point route this yields a finite proof (≈1.1e4 leaves; lecture
+    notes quote ~7228 under a slightly different adaptive stop).
+    """
+    wps = list(waypoints if waypoints is not None else directional_waypoints())
+    leaves = 0
+    failed = 0
+    stack = [(-arena_r, -arena_r, arena_r, arena_r)]
+    while stack:
+        xmin, ymin, xmax, ymax = stack.pop()
+        if _cell_outside_arena(xmin, ymin, xmax, ymax, arena_r):
+            continue
+        cx = 0.5 * (xmin + xmax)
+        cy = 0.5 * (ymin + ymax)
+        if dist((cx, cy), (0.0, 0.0)) > arena_r + 1e-9:
+            continue
+        side = max(xmax - xmin, ymax - ymin)
+        if side > min_cell + 1e-9:
+            mx = 0.5 * (xmin + xmax)
+            my = 0.5 * (ymin + ymax)
+            stack.extend(
+                [
+                    (xmin, ymin, mx, my),
+                    (mx, ymin, xmax, my),
+                    (xmin, my, mx, ymax),
+                    (mx, my, xmax, ymax),
+                ]
+            )
+            continue
+        leaves += 1
+        if not _cell_leaf_ok(xmin, ymin, xmax, ymax, wps, cover_r, arena_r):
+            failed += 1
+    return {
+        "ok": failed == 0,
+        "leaves": leaves,
+        "failed_leaves": failed,
+        "n_waypoints": len(wps),
+        "min_cell": min_cell,
+        "cover_r": cover_r,
+        "arena_r": arena_r,
+    }
+
+
+@lru_cache(maxsize=1)
+def directional_certificate() -> dict:
+    """Cached certificate for the default 21-point Q4 route."""
+    return build_directional_certificate(tuple(directional_waypoints()))
+
+
+@lru_cache(maxsize=1)
+def q4_spiral_waypoints() -> tuple[Point, ...]:
+    """Q4 covering spiral: Archimedean out to outer full R, then one outer lap.
+
+    Double-ring certificate route stays the submission default. Spiral is kept
+    dense as an experimental alternate walk.
+    """
+    return tuple(_archimedean_q4_points())
 
 
 def covering_phases(waypoints: Sequence[Point]) -> tuple[Point, list[Point], list[Point]]:
@@ -101,6 +290,39 @@ def covering_phases(waypoints: Sequence[Point]) -> tuple[Point, list[Point], lis
         else:
             outer.append(wp)
     return origin, inner, outer
+
+
+def q4_bounce_order(
+    inner: Sequence[Point],
+    outer: Sequence[Point],
+    start: Point = (0.0, 0.0),
+) -> list[Point]:
+    """Alternate nearest remaining inner / outer listen (ping-pong)."""
+    inner_left = list(inner)
+    outer_left = list(outer)
+    cur = start
+    want_inner = True
+    ordered: list[Point] = [start]
+    while inner_left or outer_left:
+        if want_inner and inner_left:
+            pool = inner_left
+        elif (not want_inner) and outer_left:
+            pool = outer_left
+        elif inner_left:
+            pool = inner_left
+        else:
+            pool = outer_left
+        wp = min(pool, key=lambda p: dist(cur, p))
+        pool.remove(wp)
+        ordered.append(wp)
+        cur = wp
+        want_inner = dist(wp, (0.0, 0.0)) > INNER_R_MAX
+    return ordered
+
+
+def q4_bounce_waypoints() -> list[Point]:
+    origin, inner, outer = covering_phases(directional_waypoints())
+    return q4_bounce_order(inner, outer, origin)
 
 
 def _sample_disk(radius: float, n_radial: int = 8, n_ang: int = 72) -> list[Point]:
@@ -121,34 +343,25 @@ def _in_front_halfplane(src: Point, heading_deg: float, probe: Point) -> bool:
 
 
 def q4_listen_set(waypoints: Sequence[Point] | None = None) -> list[Point]:
-    """Covering waypoints plus the 900 m enroute stops used by HuntPolicy."""
-    pts = list(waypoints if waypoints is not None else directional_waypoints())
-    for k in range(OMNI_RING_N):
-        a = 2.0 * math.pi * k / OMNI_RING_N
-        pts.append((ENROUTE_R * math.cos(a), ENROUTE_R * math.sin(a)))
-    return pts
+    """Covering waypoints for Q4 (995+1865 route; no extra 900 m enroute stops)."""
+    return list(waypoints if waypoints is not None else directional_waypoints())
 
 
 def directional_front_cover_ok(
     waypoints: Sequence[Point] | None = None,
     cover_r: float = COVER_R,
     arena_r: float = ARENA_R,
+    *,
+    include_ring_enroute: bool = True,
 ) -> bool:
-    """Every sampled pose has a listen point in its 180° front disk of radius cover_r.
+    """Directional no-blind-spot cover via the convex-hull criterion.
 
-    This is the directional-sensor covering condition (Ma & Liu style sector
-    coverage): a source is heard only if a waypoint lies in heading ±90° and
-    within r_eff. Enroute 900 m stops are included for near-center outward sources.
+    ``include_ring_enroute`` is kept for API compatibility; the certificate
+    route does not add 900 m stops.
     """
+    del include_ring_enroute
     wps = q4_listen_set(waypoints)
-    headings = [i * 15.0 for i in range(24)]
-    for g in _sample_disk(arena_r, n_radial=6, n_ang=48):
-        for h in headings:
-            if not any(
-                dist(w, g) <= cover_r + 1e-6 and _in_front_halfplane(g, h, w) for w in wps
-            ):
-                return False
-    return True
+    return directional_hull_cover_ok(wps, cover_r=cover_r, arena_r=arena_r)
 
 
 def coverage_ok(

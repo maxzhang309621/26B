@@ -13,6 +13,10 @@ Y_MIN, Y_MAX = 400.0, 800.0
 H_DEFAULT = 600.0
 H_COMPACT = 400.0
 RHO_COMPACT = 450.0
+# Lecture Q2 heuristic: local (600, ±350) inside three 1000 m hear-guarantee disks.
+LECTURE_RHO = 600.0
+LECTURE_H = 350.0
+R_HEAR_MIN = 1000.0
 
 
 def body_axes(theta_deg: float) -> tuple[Point, Point]:
@@ -82,6 +86,54 @@ def candidate_region(s1: Point, theta_deg: float) -> list[list[Point]]:
     return [_rect_corners(s1, theta_deg, 1.0), _rect_corners(s1, theta_deg, -1.0)]
 
 
+def _clip_arena(p: Point) -> Point:
+    r = dist(p, (0.0, 0.0))
+    if r > ARENA_R:
+        return scale(p, ARENA_R / r)
+    return p
+
+
+def error_boundary_endpoints(
+    s1: Point,
+    theta_deg: float,
+    r: float = R_HEAR_MIN,
+    delta_deg: float = 1.0,
+) -> tuple[Point, Point]:
+    """±δ° ray points at distance r from S1 (lecture three-disk centers)."""
+    return (
+        from_body(s1, theta_deg + delta_deg, r, 0.0),
+        from_body(s1, theta_deg - delta_deg, r, 0.0),
+    )
+
+
+def in_three_disk_intersection(
+    s1: Point,
+    theta_deg: float,
+    p: Point,
+    r: float = R_HEAR_MIN,
+    delta_deg: float = 1.0,
+) -> bool:
+    """True if p lies in ∩ of three r-disks: S1 and the ±δ° boundary endpoints @ r.
+
+    Guarantees a source heard at S1 (worst-case min range r) can still be heard
+    at p — lecture Q2 '还能收到' set. Does not guarantee a clear after two looks.
+    """
+    e_plus, e_minus = error_boundary_endpoints(s1, theta_deg, r=r, delta_deg=delta_deg)
+    return (
+        dist(p, s1) <= r + 1e-6
+        and dist(p, e_plus) <= r + 1e-6
+        and dist(p, e_minus) <= r + 1e-6
+    )
+
+
+def lecture_second_sides(s1: Point, theta_deg: float) -> tuple[Point, Point]:
+    """Canonical lecture pair (600, ±350) in the first-bearing body frame."""
+    return (
+        _clip_arena(from_body(s1, theta_deg, LECTURE_RHO, LECTURE_H)),
+        _clip_arena(from_body(s1, theta_deg, LECTURE_RHO, -LECTURE_H)),
+    )
+
+
 def recommend_second_sides(
     s1: Point,
     theta_deg: float,
@@ -100,13 +152,6 @@ def recommend_second_sides(
         return p
 
     return clip(from_body(s1, theta_deg, rho, h)), clip(from_body(s1, theta_deg, rho, -h))
-
-
-def _clip_arena(p: Point) -> Point:
-    r = dist(p, (0.0, 0.0))
-    if r > ARENA_R:
-        return scale(p, ARENA_R / r)
-    return p
 
 
 def recommend_second_sides_compact(
@@ -179,16 +224,37 @@ def next_stations(
     directional: bool = False,
     silence: Sequence[Point] | None = None,
 ) -> list[Point]:
-    """Legal second stations: off the bearing, 60–120° if possible; empty if none.
+    """Legal second stations: lecture (600,±350) first when hear-safe, then band.
 
-    Directional mode rejects far orthogonal points that sit behind the first lobe.
+    Directional mode also rejects points that sit behind the first lobe.
     """
     now = now if now is not None else s1
-    raw: list[Point] = []
+    out: list[Point] = []
+
+    def _ok(p: Point, *, min_lateral: float) -> bool:
+        if dist(p, s1) <= 5.0:
+            return False
+        _x, y = to_body(s1, theta_deg, p)
+        if abs(y) < min_lateral - 1e-6:
+            return False
+        if silence and any(dist(p, q) < 35.0 for q in silence):
+            return False
+        if any(dist(p, q) <= 5.0 for q in out):
+            return False
+        if directional and not front_compatible(s1, theta_deg, p):
+            return False
+        return True
+
+    # Lecture pair: prefer nearer side first; require three-disk hear guarantee.
+    lecture = list(lecture_second_sides(s1, theta_deg))
+    lecture.sort(key=lambda p: dist(p, now))
+    for p in lecture:
+        if in_three_disk_intersection(s1, theta_deg, p) and _ok(p, min_lateral=LECTURE_H):
+            out.append(p)
+
     if directional:
         compact = list(recommend_second_sides_compact(s1, theta_deg))
-        raw.extend(compact)
-        extras: list[Point] = []
+        extras: list[Point] = list(compact)
         for rho, h in ((320.0, 400.0), (400.0, 450.0)):
             extras.extend(
                 (
@@ -197,42 +263,26 @@ def next_stations(
                 )
             )
         g_hat = from_body(s1, theta_deg, 800.0, 0.0)
+        scored: list[tuple[int, float, Point]] = []
         for p in extras:
+            if not _ok(p, min_lateral=Y_MIN):
+                continue
             ang = intersection_angle_deg(s1, p, g_hat)
-            if 55.0 <= ang <= 125.0:
-                raw.append(p)
-    else:
-        pref = recommend_second(s1, theta_deg, now=now)
-        rest = [p for p in recommend_second_sides_compact(s1, theta_deg) if dist(p, pref) > 5.0]
-        ordered_omni = [pref] + rest
-        out_omni: list[Point] = []
-        for p in ordered_omni:
-            if dist(p, s1) <= 5.0:
-                continue
-            _x, y = to_body(s1, theta_deg, p)
-            if abs(y) < Y_MIN - 1e-6:
-                continue
-            if silence and any(dist(p, q) < 35.0 for q in silence):
-                continue
-            if all(dist(p, q) > 5.0 for q in out_omni):
-                out_omni.append(p)
-        return out_omni
+            if p in compact or (55.0 <= ang <= 125.0):
+                front = 0 if front_compatible(s1, theta_deg, p) else 1
+                scored.append((front, dist(p, now), p))
+        scored.sort()
+        for _, _, p in scored:
+            if all(dist(p, q) > 5.0 for q in out):
+                out.append(p)
+        return out
 
-    scored: list[tuple[int, float, Point]] = []
-    for p in raw:
-        if dist(p, s1) <= 5.0:
-            continue
-        _x, y = to_body(s1, theta_deg, p)
-        if abs(y) < Y_MIN - 1e-6:
-            continue
-        if silence and any(dist(p, q) < 35.0 for q in silence):
-            continue
-        if any(dist(p, q) <= 5.0 for _, _, q in scored):
-            continue
-        front = 0 if (not directional or front_compatible(s1, theta_deg, p)) else 1
-        scored.append((front, dist(p, now), p))
-    scored.sort()
-    return [p for _, _, p in scored]
+    pref = recommend_second(s1, theta_deg, now=now)
+    rest = [p for p in recommend_second_sides_compact(s1, theta_deg) if dist(p, pref) > 5.0]
+    for p in [pref] + rest:
+        if _ok(p, min_lateral=Y_MIN):
+            out.append(p)
+    return out
 
 
 def intersection_angle_deg(s1: Point, s2: Point, g: Point) -> float:

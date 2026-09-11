@@ -9,17 +9,20 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Callable
+from typing import Callable, Sequence
 
 from geometry import (
     Point,
     Q3_ARENA_R,
     add,
+    convex_hull,
     cross,
     dist,
     intersect_cones,
     intersect_feasible_region,
     locate_quality,
+    optical_grid_centers,
+    plausible_vertices_after_no_signal,
     scale,
     smallest_enclosing_circle,
     sub,
@@ -27,6 +30,7 @@ from geometry import (
 )
 from candidate import (
     in_candidate_region,
+    lecture_second_sides,
     next_stations,
     recommend_second,
     recommend_second_options,
@@ -35,12 +39,14 @@ from candidate import (
 from belief import ChannelBook, Detection, R_RULE_OUT
 from coverage import (
     ENROUTE_R,
+    INNER_R_MAX,
     Q4_OUTER_FULL_N,
     Q4_OUTER_FULL_R,
     covering_phases,
     directional_waypoints,
     omni_waypoints,
     pick_q4_outer_ring,
+    q4_spiral_waypoints,
 )
 from robot_client import RobotClient
 
@@ -55,6 +61,9 @@ FAN_CLEAR_OFFSETS = (12.0, 18.0)
 MAX_CREEP_STEPS_DIR = 8
 DEFAULT_EXIT_RESERVE_S = 15.0
 MAX_ACTION_ATTEMPTS = 2
+OPTICAL_GRID_M = 25.0
+OPTICAL_GRID_MAX_CELLS = 64
+OPTICAL_SILENCE_TRIGGER = 2
 
 
 def _perp(p: Point) -> Point:
@@ -247,6 +256,7 @@ class HuntPolicy:
         q4_profile: str = "dynamic_pure",
         q4_enter_omni: int | None = None,
         q4_enter_dir: int | None = None,
+        q4_route: str = "rings",
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
             raise ValueError("exit_reserve_s must be a finite non-negative number")
@@ -272,17 +282,27 @@ class HuntPolicy:
         self.q4_profile = q4_profile if q4_profile in ("v2", "dynamic_pure") else "v2"
         self.q4_enter_omni = q4_enter_omni
         self.q4_enter_dir = q4_enter_dir
+        self.q4_route = q4_route if q4_route in ("spiral", "bounce") else "rings"
         self.q4_outer_r = Q4_OUTER_FULL_R
         self.q4_outer_n = Q4_OUTER_FULL_N
-        self.waypoints = (
-            directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
-            if directional
-            else omni_waypoints()
-        )
+        if directional and self.q4_route == "spiral":
+            self.waypoints = list(q4_spiral_waypoints())
+            self.q4_outer_n = sum(
+                1 for wp in self.waypoints if dist(wp, (0.0, 0.0)) > INNER_R_MAX
+            )
+        else:
+            self.waypoints = (
+                directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+                if directional
+                else omni_waypoints()
+            )
         self.stuck: set[int] = set()
         self.creep_calls = 0
         self.creep_steps = 0
         self.creep_attempted: set[int] = set()
+        self.optical_grid_calls = 0
+        self.optical_grid_cells = 0
+        self.optical_grid_hits = 0
         self.route_rechecks = 0
         self.route_recheck_hits = 0
         self.deferred_channels: set[int] = set()
@@ -318,8 +338,8 @@ class HuntPolicy:
         self._apply_q4_outer(body)
 
     def _apply_q4_outer(self, body: dict) -> None:
-        """v_nofar keeps 12x2100. Dynamic outer is opt-in (run_q4_v2 only)."""
-        if not self.directional or not self.q4_dynamic_outer:
+        """v_nofar keeps 12×1865. Dynamic outer is opt-in (run_q4_v2 only)."""
+        if not self.directional or not self.q4_dynamic_outer or self.q4_route == "spiral":
             return
         omni = body.get("omnidirectional_jammer_count")
         dir_n = body.get("directional_jammer_count")
@@ -514,14 +534,16 @@ class HuntPolicy:
             termination_reason = "action_failure"
         elif self._stopped_at_clear_limit:
             termination_reason = "cleared_max_16"
-        elif self._route_completed and pending_at_exit == 0:
+        elif self._done() or (len(self.book.cleared) + pending_at_exit) >= self._target_n:
             termination_reason = "coverage_complete"
+        elif self.directional and self._proven_cover_complete():
+            termination_reason = "proven_cover_complete"
         elif self._coverage_short_circuit:
             termination_reason = "coverage_short_circuit"
-        elif self._route_completed:
+        elif self._route_completed and pending_at_exit > 0:
             termination_reason = "route_completed_with_pending"
-        elif self._done() or not self.book.unknown_channels():
-            termination_reason = "coverage_complete"
+        elif self._route_completed:
+            termination_reason = "route_completed_unproven"
         else:
             termination_reason = "incomplete"
         exit_accepted = _accepted(exit_body)
@@ -537,6 +559,9 @@ class HuntPolicy:
             "channels": sorted(self.book.cleared),
             "creep_calls": self.creep_calls,
             "creep_steps": self.creep_steps,
+            "optical_grid_calls": self.optical_grid_calls,
+            "optical_grid_cells": self.optical_grid_cells,
+            "optical_grid_hits": self.optical_grid_hits,
             "route_rechecks": self.route_rechecks,
             "route_recheck_hits": self.route_recheck_hits,
             "deferred_channels": len(self.deferred_channels),
@@ -544,6 +569,7 @@ class HuntPolicy:
             "localization_services": self.localization_services,
             "q4_outer_r": self.q4_outer_r if self.directional else None,
             "q4_outer_n": self.q4_outer_n if self.directional else None,
+            "q4_route": self.q4_route if self.directional else None,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -563,14 +589,25 @@ class HuntPolicy:
         }
 
     def _run_directional_cover(self) -> None:
-        """Q4: origin → inner NN → outer NN (with enroute / redundancy skips)."""
+        """Q4 cover: double-ring, spiral, or inner/outer bounce."""
+        if self.q4_route == "spiral":
+            self._scan_point(self.waypoints[0], list(range(1, 21)))
+            self._cover_listens.append(self.waypoints[0])
+            self._drain_pending()
+            self._cover_ordered(self.waypoints[1:])
+            if not self._guard_tripped() and not self._done():
+                self._route_completed = True
+            return
         origin, inner, outer = covering_phases(self.waypoints)
         self._scan_point(origin, list(range(1, 21)))
         self._cover_listens.append(origin)
         self._drain_pending()
-        self._cover_tour(inner)
-        self._inner_done = True
-        self._cover_tour(outer)
+        if self.q4_route == "bounce":
+            self._cover_bounce(inner, outer)
+        else:
+            self._cover_tour(inner)
+            self._inner_done = True
+            self._cover_tour(outer)
         if not self._guard_tripped() and not self._done():
             self._route_completed = True
 
@@ -624,12 +661,71 @@ class HuntPolicy:
             self._drain_pending([])
 
     def _done(self) -> bool:
+        """Exit A: cleared count reaches known upper bound (enter jammer_count or 16)."""
         return len(self.book.cleared) >= self._target_n
 
+    def _proven_cover_complete(self) -> bool:
+        """Exit B half: every still-unknown channel was tested at all cover listens."""
+        if not self.directional or not self._route_completed:
+            return False
+        if self.book.pending():
+            return False
+        cover = list(self.waypoints)
+        if len(cover) < 2:
+            return False
+        for ch in self.book.unknown_channels():
+            sites = self.book.scanned_at.get(ch, [])
+            for wp in cover:
+                if not any(dist(wp, s) <= 5.0 for s in sites):
+                    return False
+        return True
+
     def _search_complete(self) -> bool:
-        """Stop covering once every live source is heard (n from /enter, else 16)."""
+        """Legal stop for covering: Exit A (heard≥N) or Exit B (proven cover).
+
+        Q4 does **not** stop merely because unknown channels are silent for a
+        while — only after the certificate route has tested every remaining
+        unknown channel at every cover listen (or the count upper bound).
+        """
+        if self._done():
+            return True
         heard = len(self.book.cleared) + len(self.book.pending())
-        return heard >= self._target_n or not self.book.unknown_channels()
+        if heard >= self._target_n:
+            return True
+        if not self.directional:
+            return not self.book.unknown_channels()
+        return self._proven_cover_complete()
+
+    def _cover_ordered(self, remaining: list[Point]) -> None:
+        """Visit covering points in listed order (spiral); skip redundant disks."""
+        for wp in remaining:
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            if dist(wp, (0.0, 0.0)) > INNER_R_MAX:
+                self._inner_done = True
+            self._visit_cover_wp(wp)
+
+    def _cover_bounce(self, inner: list[Point], outer: list[Point]) -> None:
+        """Ping-pong: nearest remaining inner, then outer, until both rings done."""
+        inner_left = list(inner)
+        outer_left = list(outer)
+        want_inner = True
+        while inner_left or outer_left:
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            if want_inner and inner_left:
+                pool = inner_left
+            elif (not want_inner) and outer_left:
+                pool = outer_left
+            elif inner_left:
+                pool = inner_left
+            else:
+                pool = outer_left
+            wp = min(pool, key=lambda p: dist(self.bot.position, p))
+            pool.remove(wp)
+            self._inner_done = not inner_left
+            self._visit_cover_wp(wp)
+            want_inner = dist(wp, (0.0, 0.0)) > INNER_R_MAX
 
     def _cover_tour(self, remaining: list[Point]) -> None:
         """Visit remaining covering points by nearest neighbor; skip same-ring redundant disks."""
@@ -643,24 +739,39 @@ class HuntPolicy:
         if self._done() or self._search_complete():
             return
         unknown = self.book.unknown_channels()
-        if self._waypoint_useful(wp, unknown) and not self._redundant_cover(wp):
-            self._scan_point(wp, self._channels_for(wp, unknown))
-            self._cover_listens.append(wp)
-            self._drain_pending()
+        if not unknown:
+            return
+        # Q4 certificate: measure every remaining unknown at each cover listen
+        # so Exit B ("proven cover") is a hard, checkable stop — not belief skip.
+        if self.directional:
+            chs = unknown
+        elif self._waypoint_useful(wp, unknown) and not self._redundant_cover(wp):
+            chs = self._channels_for(wp, unknown)
+        else:
+            return
+        self._scan_point(wp, chs)
+        self._cover_listens.append(wp)
+        self._drain_pending()
 
     def _cover_nn(self, remaining: list[Point]) -> None:
         pending = set(remaining)
         ring = list(remaining)
         while pending and not self._done() and not self._search_complete() and not self._guard_tripped():
             unknown = self.book.unknown_channels()
-            useful = [
-                wp
-                for wp in ring
-                if wp in pending and self._waypoint_useful(wp, unknown) and not self._redundant_cover(wp)
-            ]
-            if not useful:
+            if self.directional:
+                # Certificate route: visit every cover listen (Exit B needs scans).
+                candidates = [wp for wp in ring if wp in pending]
+            else:
+                candidates = [
+                    wp
+                    for wp in ring
+                    if wp in pending
+                    and self._waypoint_useful(wp, unknown)
+                    and not self._redundant_cover(wp)
+                ]
+            if not candidates:
                 break
-            wp = min(useful, key=lambda p: dist(self.bot.position, p))
+            wp = min(candidates, key=lambda p: dist(self.bot.position, p))
             pending.remove(wp)
             self._visit_cover_wp(wp)
 
@@ -682,10 +793,10 @@ class HuntPolicy:
     def _redundant_cover(self, xy: Point) -> bool:
         """Skip a listen that sits in another same-ring covering disk of radius min r_eff.
 
-        Inner (1200 m) must not suppress outer (~1900 m): radial gap is ~700 m < 1000 m,
-        but that disk overlap is isotropic and misses outward directional sources.
+        Disabled on Q4 directional certificate routes (need every listen for Exit B).
+        Inner must not suppress outer: only skip within the same radial band.
         """
-        if not self._inner_done:
+        if self.directional or not self._inner_done:
             return False
         r = dist(xy, (0.0, 0.0))
         for p in self._cover_listens:
@@ -696,7 +807,13 @@ class HuntPolicy:
         return False
 
     def _listen_enroute(self, dest: Point) -> None:
-        """Stop at 900 m on the origin→inner-ring ray so near-center outward sources are heard."""
+        """Legacy 900 m mid-stop for old 1200 m inner rings.
+
+        The Q4 certificate route (origin+8×995+12×1865) does not use enroute
+        stops — 995 m already provides near-center front-lobe listens.
+        """
+        if self.directional:
+            return
         origin = (0.0, 0.0)
         rd = dist(dest, origin)
         if rd < 1100.0 or rd > 1300.0:
@@ -1045,6 +1162,8 @@ class HuntPolicy:
         return inserted
 
     def _localize_and_clear(self, ch: int) -> None:
+        silence_streak = 0
+        last_region_verts: list[Point] = []
         for _ in range(MAX_FIX_MEASURES):
             if self._guard_tripped():
                 return
@@ -1114,6 +1233,7 @@ class HuntPolicy:
                 if self._creep_clear(ch, last.xy, last.svd_deg):
                     return
                 continue
+            last_region_verts = list(region.vertices)
             cen, rad = smallest_enclosing_circle(region.vertices)
             if rad <= CLEAR_R:
                 if self._try_clear(cen, ch, charge=False, source="sec_center"):
@@ -1123,19 +1243,97 @@ class HuntPolicy:
                 if self._try_clear(along, ch, charge=False, source="sec_along"):
                     return
             nxt = cen if dist(cen, self.bot.position) >= 8.0 else _third_point(region.vertices, self.bot.position)
+            before = len(self.book.detections.get(ch, []))
+            silent_before = len(self.book.silent_at.get(ch, []))
             if self._measure_obs(ch, nxt, obs):
+                if len(self.book.detections.get(ch, [])) > before:
+                    silence_streak = 0
                 continue
+            # no new direction: count consecutive AOA silences at shrink attempts
+            if len(self.book.silent_at.get(ch, [])) > silent_before:
+                silence_streak += 1
+            if silence_streak >= OPTICAL_SILENCE_TRIGGER:
+                if self._optical_grid_clear(ch, last_region_verts):
+                    return
             if self._try_clear(nxt, ch, source="measure_fallback"):
                 return
             last = obs[-1]
-            self._creep_clear(ch, last.xy, last.svd_deg)
+            if self._creep_clear(ch, last.xy, last.svd_deg, region_verts=last_region_verts):
+                return
             return
         obs = self.book.detections.get(ch, [])
         if obs and ch not in self.book.cleared:
             last = obs[-1]
-            if self._creep_clear(ch, last.xy, last.svd_deg):
+            verts = last_region_verts or self._channel_feasible_vertices(ch)
+            if self._creep_clear(ch, last.xy, last.svd_deg, region_verts=verts):
+                return
+            if self._optical_grid_clear(ch, verts):
                 return
             self._fan_clear(ch, last.xy, last.svd_deg)
+
+    def _channel_feasible_vertices(self, ch: int) -> list[Point]:
+        """Convex feasible envelope for optical / creep fallback.
+
+        Q3 prefers the conservative feasible region (arena ∩ cones ∩ range
+        disks), then shrinks by no_signal exclusion — matching the lecture
+        'shrunk AOA polygon' optical grid. Clear certificates still use
+        locate_quality / SEC elsewhere.
+        """
+        obs = self.book.detections.get(ch, [])
+        if len(obs) < 2:
+            return []
+        used = _diverse_obs(obs, 4)
+        stations = [d.xy for d in used]
+        bearings = [d.svd_deg for d in used]
+        verts: list[Point] = []
+        if not self.directional:
+            region = intersect_feasible_region(stations, bearings)
+            if not region.empty and region.vertices:
+                verts = list(region.vertices)
+        if len(verts) < 2:
+            region = intersect_cones(stations, bearings)
+            if not region.empty and region.bounded and len(region.vertices) >= 2:
+                verts = list(region.vertices)
+        if len(verts) < 2:
+            return []
+        silent = list(self.book.silent_at.get(ch, [])) + list(
+            self.book.no_signal_at.get(ch, [])
+        )
+        if silent:
+            kept = plausible_vertices_after_no_signal(verts, silent)
+            if len(kept) >= 3:
+                return convex_hull(kept)
+            if kept:
+                return kept
+        return verts
+
+    def _optical_grid_clear(self, ch: int, vertices: Sequence[Point] | None) -> bool:
+        """Finite optical sweep of shrunk AOA region (25 m cells, clear at centers)."""
+        if ch in self.book.cleared:
+            return True
+        verts = list(vertices or ())
+        if len(verts) < 2:
+            verts = self._channel_feasible_vertices(ch)
+        if len(verts) < 2:
+            return False
+        centers = optical_grid_centers(
+            verts, cell=OPTICAL_GRID_M, max_cells=OPTICAL_GRID_MAX_CELLS
+        )
+        if not centers:
+            return False
+        self.optical_grid_calls += 1
+        # Visit nearest remaining cell first to cut empty travel.
+        remaining = list(centers)
+        while remaining and ch not in self.book.cleared:
+            if self._guard_tripped():
+                return ch in self.book.cleared
+            i = min(range(len(remaining)), key=lambda k: dist(self.bot.position, remaining[k]))
+            c = remaining.pop(i)
+            self.optical_grid_cells += 1
+            if self._try_clear(c, ch, charge=False, source="optical_grid"):
+                self.optical_grid_hits += 1
+                return True
+        return ch in self.book.cleared
 
     def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
         for q in _best_fixes(obs):
@@ -1145,7 +1343,7 @@ class HuntPolicy:
 
     def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
         if not self.directional:
-            # Q3: Q2 next_stations primary, then legal recommend_second_options.
+            # Q3: lecture (600,±350) via next_stations, then band fallbacks.
             ordered = next_stations(
                 s1,
                 th,
@@ -1157,13 +1355,21 @@ class HuntPolicy:
                 if all(dist(p, q) > 5.0 for q in ordered):
                     ordered.append(p)
             if not ordered:
+                lecture = list(lecture_second_sides(s1, th))
+                lecture.sort(key=lambda p: dist(p, self.bot.position))
                 pref = recommend_second(s1, th, now=self.bot.position)
                 compact = list(recommend_second_sides_compact(s1, th))
-                ordered = [pref] + [p for p in compact if dist(p, pref) > 5.0]
+                ordered = lecture + [pref] + [p for p in compact if dist(p, pref) > 5.0]
         else:
+            # Q4: lecture pair first when hear-safe, then compact / band.
+            lecture = list(lecture_second_sides(s1, th))
+            lecture.sort(key=lambda p: dist(p, self.bot.position))
             compact = list(recommend_second_sides_compact(s1, th))
             compact.sort(key=lambda p: dist(p, self.bot.position))
-            ordered = compact
+            ordered = []
+            for p in lecture + compact:
+                if all(dist(p, q) > 5.0 for q in ordered):
+                    ordered.append(p)
             extra = next_stations(
                 s1,
                 th,
@@ -1199,7 +1405,13 @@ class HuntPolicy:
             return True
         return False
 
-    def _creep_clear(self, ch: int, start: Point, th: float) -> bool:
+    def _creep_clear(
+        self,
+        ch: int,
+        start: Point,
+        th: float,
+        region_verts: Sequence[Point] | None = None,
+    ) -> bool:
         if not self.directional:
             if ch in self.creep_attempted:
                 return False
@@ -1249,8 +1461,22 @@ class HuntPolicy:
                 step = 28.0
                 p = last_good
                 continue
-            return self._fan_clear(ch, last_good, heading)
-        return self._try_clear(last_good, ch, source="creep_last") or self._fan_clear(ch, last_good, heading)
+            return self._fallback_after_creep(ch, last_good, heading, region_verts)
+        if self._try_clear(last_good, ch, source="creep_last"):
+            return True
+        return self._fallback_after_creep(ch, last_good, heading, region_verts)
+
+    def _fallback_after_creep(
+        self,
+        ch: int,
+        xy: Point,
+        heading: float,
+        region_verts: Sequence[Point] | None,
+    ) -> bool:
+        verts = list(region_verts or ()) or self._channel_feasible_vertices(ch)
+        if self._optical_grid_clear(ch, verts):
+            return True
+        return self._fan_clear(ch, xy, heading)
 
     def _probe_segment(self, ch: int, a: Point, b: Point, _heading: float) -> bool:
         for t in (0.5, 0.25, 0.75):
@@ -1295,4 +1521,6 @@ class HuntPolicy:
         if self._try_bearing_clears(ch, obs):
             return
         last = obs[-1]
+        if self._optical_grid_clear(ch, self._channel_feasible_vertices(ch)):
+            return
         self._fan_clear(ch, last.xy, last.svd_deg)

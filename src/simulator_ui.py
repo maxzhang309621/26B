@@ -31,7 +31,14 @@ from practice_guard import (
     normalize_label,
 )
 
-_PS_LIST = r"""
+# PowerShell 5 pipes OEM by default; Python reads UTF-8. Force UTF-8 so
+# 「开始问题4演练测试」 matches the whitelist instead of U+FFFD mojibake.
+_PS_UTF8 = r"""
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
+"""
+
+_PS_LIST = _PS_UTF8 + r"""
 Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition(
@@ -55,6 +62,8 @@ foreach ($el in $all) {
 # formal-activation dialog is on screen. Exact name match only (never substring).
 _PS_CLICK = r"""
 param([Parameter(Mandatory=$true)][string]$ExactName)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition(

@@ -31,7 +31,9 @@ from coverage import (  # noqa: E402
     Q4_OUTER_FULL_R,
     directional_waypoints,
     omni_waypoints,
+    q4_bounce_waypoints,
     q4_listen_set,
+    q4_spiral_waypoints,
 )
 from geometry import dist, locate_quality, unit  # noqa: E402
 
@@ -518,6 +520,135 @@ def fig_q4_layers() -> Path:
     return p
 
 
+def fig_q4_spiral_path() -> Path:
+    """Double-ring covering tour vs Archimedean spiral listen order."""
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    from matplotlib.colors import LinearSegmentedColormap
+
+    inner = omni_waypoints()
+    outer = [
+        p
+        for p in directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+        if dist(p, (0.0, 0.0)) > 1800
+    ]
+    ring_path = list(inner) + list(outer)
+    spiral = list(q4_spiral_waypoints())
+
+    cmap = LinearSegmentedColormap.from_list(
+        "tour", [INNER_C, ENROUTE_C, OUTER_C], N=256
+    )
+
+    def _path_lines(pts):
+        segs = np.array([[pts[i], pts[i + 1]] for i in range(len(pts) - 1)])
+        t = np.linspace(0.0, 1.0, max(len(segs), 1))
+        return segs, t
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 5.55))
+    titles = ("双圈 $v_{\\mathrm{nofar}}$（内环→外环）", "螺旋（阿基米德 + 2100 m 外圈）")
+    paths = (ring_path, spiral)
+    for ax, title, pts in zip(axes, titles, paths):
+        _arena(ax)
+        _ring(ax, ARENA_R, "#8A94A6", ls=(0, (5, 2.5)), lw=1.0)
+        _ring(ax, Q4_OUTER_FULL_R, OUTER_C, lw=0.85, alpha=0.55)
+        segs, t = _path_lines(pts)
+        lc = LineCollection(
+            segs, cmap=cmap, array=t, linewidths=1.85, zorder=4, capstyle="round"
+        )
+        ax.add_collection(lc)
+        rs = [dist(p, (0.0, 0.0)) for p in pts[1:]]
+        xs = [p[0] for p in pts[1:]]
+        ys = [p[1] for p in pts[1:]]
+        colors = [cmap(min(r / Q4_OUTER_FULL_R, 1.0)) for r in rs]
+        ax.scatter(xs, ys, s=28, c=colors, edgecolors="white", linewidths=0.45, zorder=6)
+        ax.scatter([0], [0], s=78, c=INK, marker="s", edgecolors="white", linewidths=0.7, zorder=8)
+        ax.annotate(
+            "起点",
+            xy=(0, 0),
+            xytext=(180, -280),
+            fontsize=8,
+            color=INK,
+            arrowprops=dict(arrowstyle="-|>", color=INK, lw=0.8),
+            zorder=12,
+        )
+        ax.set_title(title, fontsize=11, pad=8)
+        _style_xy(ax, 2350)
+
+    fig.suptitle("问题四覆盖航路", fontsize=12, y=1.01)
+    fig.tight_layout()
+    p = _save(fig, "pro_q4_spiral_path")
+    plt.close(fig)
+    return p
+
+
+def fig_q4_bounce_path() -> Path:
+    """Double-ring (inner then outer) vs inner/outer ping-pong."""
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    from matplotlib.colors import LinearSegmentedColormap
+
+    inner = omni_waypoints()
+    outer = [
+        p
+        for p in directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+        if dist(p, (0.0, 0.0)) > 1800
+    ]
+    ring_path = list(inner) + list(outer)
+    bounce = q4_bounce_waypoints()
+    cmap = LinearSegmentedColormap.from_list(
+        "tour", [INNER_C, ENROUTE_C, OUTER_C], N=256
+    )
+
+    def _path_lines(pts):
+        segs = np.array([[pts[i], pts[i + 1]] for i in range(len(pts) - 1)])
+        t = np.linspace(0.0, 1.0, max(len(segs), 1))
+        return segs, t
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 5.55))
+    titles = ("双圈：先走完内环再走外环", "反射：内点与外点交替")
+    for ax, title, pts in zip(axes, titles, (ring_path, bounce)):
+        _arena(ax)
+        _ring(ax, OMNI_RING_R, INNER_C, lw=0.9, alpha=0.45)
+        _ring(ax, Q4_OUTER_FULL_R, OUTER_C, lw=0.85, alpha=0.55)
+        segs, t = _path_lines(pts)
+        lc = LineCollection(
+            segs, cmap=cmap, array=t, linewidths=1.7, zorder=4, capstyle="round"
+        )
+        ax.add_collection(lc)
+        rs = [dist(p, (0.0, 0.0)) for p in pts[1:]]
+        xs = [p[0] for p in pts[1:]]
+        ys = [p[1] for p in pts[1:]]
+        colors = [cmap(min(r / Q4_OUTER_FULL_R, 1.0)) for r in rs]
+        ax.scatter(xs, ys, s=28, c=colors, edgecolors="white", linewidths=0.45, zorder=6)
+        ax.scatter([0], [0], s=78, c=INK, marker="s", edgecolors="white", linewidths=0.7, zorder=8)
+        if pts is bounce:
+            from matplotlib.patches import FancyArrowPatch
+
+            for i in range(min(6, len(pts) - 1)):
+                ax.add_patch(
+                    FancyArrowPatch(
+                        pts[i],
+                        pts[i + 1],
+                        arrowstyle="-|>",
+                        mutation_scale=11,
+                        color=INK,
+                        lw=0.0,
+                        shrinkA=8,
+                        shrinkB=10,
+                        zorder=7,
+                    )
+                )
+            for i, p in enumerate(pts[1:7], start=1):
+                ax.text(p[0] * 1.06, p[1] * 1.06, str(i), **_halo(8, INK))
+        ax.set_title(title, fontsize=11, pad=8)
+        _style_xy(ax, 2350)
+    fig.suptitle("问题四覆盖航路", fontsize=12, y=1.01)
+    fig.tight_layout()
+    p = _save(fig, "pro_q4_bounce_path")
+    plt.close(fig)
+    return p
+
+
 def fig_q4_outward() -> Path:
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyArrowPatch, Wedge
@@ -700,6 +831,7 @@ def main() -> None:
         fig_q3_residual,
         fig_q3_games,
         fig_q4_layers,
+        fig_q4_spiral_path,
         fig_q4_outward,
         fig_q4_frontcover,
         fig_vt_structure,
