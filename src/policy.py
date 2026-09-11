@@ -33,7 +33,15 @@ from candidate import (
     recommend_second_sides_compact,
 )
 from belief import ChannelBook, Detection, R_RULE_OUT
-from coverage import ENROUTE_R, covering_phases, directional_waypoints, omni_waypoints
+from coverage import (
+    ENROUTE_R,
+    Q4_OUTER_FULL_N,
+    Q4_OUTER_FULL_R,
+    covering_phases,
+    directional_waypoints,
+    omni_waypoints,
+    pick_q4_outer_ring,
+)
 from robot_client import RobotClient
 
 CLEAR_R = 20.0
@@ -235,6 +243,10 @@ class HuntPolicy:
         exit_reserve_s: float = DEFAULT_EXIT_RESERVE_S,
         monotonic_clock: Callable[[], float] | None = None,
         enable_step8_clear_ready_insertion: bool = False,
+        q4_dynamic_outer: bool = False,
+        q4_profile: str = "dynamic_pure",
+        q4_enter_omni: int | None = None,
+        q4_enter_dir: int | None = None,
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
             raise ValueError("exit_reserve_s must be a finite non-negative number")
@@ -256,7 +268,17 @@ class HuntPolicy:
         self._stopped_at_clear_limit = False
         self._coverage_short_circuit = False
         self.book = ChannelBook()
-        self.waypoints = directional_waypoints() if directional else omni_waypoints()
+        self.q4_dynamic_outer = q4_dynamic_outer
+        self.q4_profile = q4_profile if q4_profile in ("v2", "dynamic_pure") else "v2"
+        self.q4_enter_omni = q4_enter_omni
+        self.q4_enter_dir = q4_enter_dir
+        self.q4_outer_r = Q4_OUTER_FULL_R
+        self.q4_outer_n = Q4_OUTER_FULL_N
+        self.waypoints = (
+            directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+            if directional
+            else omni_waypoints()
+        )
         self.stuck: set[int] = set()
         self.creep_calls = 0
         self.creep_steps = 0
@@ -293,6 +315,28 @@ class HuntPolicy:
         if not body:
             return
         self._set_target_n(body.get("jammer_count"))
+        self._apply_q4_outer(body)
+
+    def _apply_q4_outer(self, body: dict) -> None:
+        """v_nofar keeps 12x2100. Dynamic outer is opt-in (run_q4_v2 only)."""
+        if not self.directional or not self.q4_dynamic_outer:
+            return
+        omni = body.get("omnidirectional_jammer_count")
+        dir_n = body.get("directional_jammer_count")
+        if not isinstance(omni, int) and isinstance(self.q4_enter_omni, int):
+            omni = self.q4_enter_omni
+        if not isinstance(dir_n, int) and isinstance(self.q4_enter_dir, int):
+            dir_n = self.q4_enter_dir
+        self.q4_outer_r, self.q4_outer_n = pick_q4_outer_ring(
+            omni if isinstance(omni, int) else None,
+            dir_n if isinstance(dir_n, int) else None,
+            jammer_count=body.get("jammer_count"),
+            pure=self.q4_profile == "dynamic_pure",
+        )
+        self.waypoints = directional_waypoints(
+            outer_r=self.q4_outer_r,
+            outer_n=self.q4_outer_n,
+        )
 
     def _target_from_log(self) -> None:
         for rec in reversed(self.bot.log):
@@ -498,6 +542,8 @@ class HuntPolicy:
             "deferred_channels": len(self.deferred_channels),
             "dedicated_localizations": self.dedicated_localizations,
             "localization_services": self.localization_services,
+            "q4_outer_r": self.q4_outer_r if self.directional else None,
+            "q4_outer_n": self.q4_outer_n if self.directional else None,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,

@@ -5,7 +5,9 @@
 | 问题 | 基线名 | 官方成绩 | 要点 | 证据 |
 |------|--------|----------|------|------|
 | **Q3** | `q3-round3-q12` | **10/10**，均时 **5245.4 s**（约 **5200 s**） | 8×1200 + 顺路复测/延后专程 + `locate_quality` / `next_stations` | `output/q3-results/official_baseline_round3_q12_10.json` |
-| **Q4** | `v_nofar` 航线覆盖 | **10/10**，均时 **8508.1 s** | 原点 → 900 途听 → 8×1200 → **12×2100** 外环 | `output/q4-results/`（`overnight_v_nofar_10.json`、README、实验报告） |
+| **Q4** | `v_nofar` 航线覆盖 | **10/10**，均时 **8508.1 s**（**677 s/源**） | 原点 → 900 途听 → 8×1200 → **12×2100** 外环；**代码默认 `run_q4()`** | `output/q4-results/`（`overnight_v_nofar_10.json`、README、实验报告） |
+
+**Q4 代码默认 = 官方基线 `v_nofar`**（`runner_q4.run_q4`，非 dynamic v2）。升级与全部演练批次见 `output/q4-results/OFFICIAL_PRACTICE_SUMMARY.md`。
 
 ## 对比规则
 

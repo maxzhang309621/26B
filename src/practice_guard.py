@@ -305,6 +305,28 @@ def assert_no_formal_activation(labels: list[str]) -> None:
         raise FormalTestBlocked(f"禁止正式测试：检测到正式测试确认框 {hit!r}，已中止且不会点击。")
 
 
+def parse_practice_jammer_mix(labels: list[str], problem: int = 4) -> tuple[int | None, int | None]:
+    """Read omni/dir split from Q4 practice window text when present."""
+    assert_no_formal_activation(labels)
+    blob = "".join(normalize_label(x) for x in labels)
+    if problem != 4 or "本次演练测试干扰源数量" not in blob:
+        return None, None
+    for pat in (
+        r"全向(\d{1,2}).*?定向(\d{1,2})",
+        r"定向(\d{1,2}).*?全向(\d{1,2})",
+    ):
+        m = re.search(pat, blob)
+        if not m:
+            continue
+        if pat.startswith("全向"):
+            omni, dir_n = int(m.group(1)), int(m.group(2))
+        else:
+            dir_n, omni = int(m.group(1)), int(m.group(2))
+        if 0 <= omni <= 16 and 0 <= dir_n <= 16 and 10 <= omni + dir_n <= 16:
+            return omni, dir_n
+    return None, None
+
+
 def parse_practice_jammer_count(labels: list[str], problem: int = 4) -> int | None:
     """Read 共 N 个 from the Q4/Q3 practice window only. Never from 正式测试."""
     assert_no_formal_activation(labels)
