@@ -84,7 +84,7 @@
 ## dev 合并与 Step 5 guard 移植记录（2026-09-11）
 
 - 按用户决定以 GitHub `dev` 分支为主：通过镜像拉取远程 `dev`（`cf9159f`），本地 `dev` 与 `integrate-q3-fastest` 均同步到该提交。
-- 远程 `dev` 已将 Q3 主循环并入 `src/policy.py`（`runner_q3.py` 改从 `policy` 导入），并引入 Q1 `locate_quality`（近共线检测、静默排除、20 m 清除判定）与 Q2 `next_stations`（交会角 60–120° 的第二站选择）。远程锁定官方演练基线：10 局 10/10 全清，平均 5245.36 s。
+- 远程 `dev` 已将 Q3 主循环并入 `src/policy.py`（`runner_q3.py` 改从 `policy` 导入），并引入 Q1 `locate_quality`（近共线检测、静默排除、20 m 清除判定）与 Q2 `next_stations`（交会角 60–120° 的第二站选择）。远程曾锁官方演练十局 5245.36 s；**当前官方最佳改为 2026-09-11 18:24 五局 5/5、均 5000.8 s**（见 `output/baselines.md`）。
 - 按用户决定融合：把本地旧版 Step 5 工程 guard（`exit_reserve_s`、单调真实时钟、动作前 `_allow_action`、measure/clear 包装、终态原因与 `completed` 判定）移植进 `policy.HuntPolicy`；Q4 定向分支行为不变。
 - 验收：62/62 单元测试通过（`test_q3_step5.py` 已改为测试 `policy.HuntPolicy`）；本地 mock 80 局（seeds 0–79）+ 边界 16 源重跑，平均虚拟时间 `5156.596150225186 s` 与远程锁定基线逐位一致，全清、pending=0、非法动作=0、退出 accepted；guard 在正常路径上惰性，不改变数值。
 - 遗留：`src/q3_optimized_policy.py` 及其旧测试仍保留（旧版 Step 5 草稿已由移植取代），是否删除待用户决定。
