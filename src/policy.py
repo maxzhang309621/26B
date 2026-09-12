@@ -38,6 +38,7 @@ from candidate import (
     recommend_second_sides_compact,
     to_body,
 )
+from dir_corrector import heard_region, locate_quality_dir, next_station_dir
 from belief import ChannelBook, Detection, R_RULE_OUT
 from coverage import (
     ENROUTE_R,
@@ -291,6 +292,7 @@ class HuntPolicy:
         q4_path_profile: str = "hexbatch",
         q4_insert_delta_max_m: float = 400.0,
         q3_path_profile: str = "defer",
+        use_dir_corrector: bool | None = None,
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
             raise ValueError("exit_reserve_s must be a finite non-negative number")
@@ -376,6 +378,13 @@ class HuntPolicy:
         self.q3_rh_switches = 0
         self.q3_cover_enroute_clears = 0
         self._q4_clear_queue: list[int] | None = None
+        self._use_dir_corrector = (
+            bool(use_dir_corrector)
+            if use_dir_corrector is not None
+            else bool(self._q4_hexbatch)
+        )
+        self.corrector_fallback = 0
+        self.corrector_used = 0
         self._set_target_n(target_n)
 
     def _set_target_n(self, n: int | None) -> None:
@@ -669,6 +678,9 @@ class HuntPolicy:
             "q4_rh_steps": self.q3_rh_steps if self._q4_hexbatch else 0,
             "q4_rh_replans": self.q3_rh_replans if self._q4_hexbatch else 0,
             "q4_rh_switches": self.q3_rh_switches if self._q4_hexbatch else 0,
+            "dir_corrector": self._use_dir_corrector,
+            "corrector_fallback": self.corrector_fallback if self._use_dir_corrector else 0,
+            "corrector_used": self.corrector_used if self._use_dir_corrector else 0,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -1207,6 +1219,21 @@ class HuntPolicy:
         """Nearest front-lobe compact second station, else along-bearing proxy."""
         now = self.bot.position
         silence = self.book.silent_at.get(ch) if ch is not None else None
+        region_vertices = None
+        if self._use_dir_corrector:
+            env = heard_region([s1], [th], delta_deg=self._aoa_delta_deg())
+            if not env.empty and env.vertices:
+                region_vertices = env.vertices
+            picked = next_station_dir(
+                s1,
+                th,
+                now=now,
+                region_vertices=region_vertices,
+                silence=silence,
+            )
+            if picked is not None:
+                return picked
+            return self._along_bearing_proxy(s1, th)
         compact = list(recommend_second_sides_compact(s1, th))
         compact.sort(key=lambda p: dist(p, now))
         for p in compact:
@@ -1250,11 +1277,10 @@ class HuntPolicy:
         gap = dist(pos, dest)
         step = self._rh_step_len(gap)
         used = _diverse_obs(obs, 4)
-        quality = locate_quality(
+        quality = self._channel_locate_quality(
             [d.xy for d in used],
             [d.svd_deg for d in used],
             silence=self.book.silent_at.get(ch),
-            delta_deg=self._aoa_delta_deg(),
         )
         if quality.can_clear_20 and quality.sec_center is not None:
             if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
@@ -1624,11 +1650,10 @@ class HuntPolicy:
         if not obs:
             return self.bot.position
         if len(obs) >= 2:
-            quality = locate_quality(
+            quality = self._channel_locate_quality(
                 [d.xy for d in obs],
                 [d.svd_deg for d in obs],
                 silence=self.book.silent_at.get(ch),
-                delta_deg=self._aoa_delta_deg(),
             )
             if quality.sec_center is not None:
                 cen = quality.sec_center
@@ -1858,7 +1883,7 @@ class HuntPolicy:
                     )
                 )
             else:
-                quality = locate_quality(
+                quality = self._channel_locate_quality(
                     stations,
                     bearings,
                     silence=self.book.silent_at.get(ch),
@@ -1873,7 +1898,11 @@ class HuntPolicy:
                     along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
                     if self._try_clear(along, ch, charge=False, source="sec_along"):
                         return
-                region = intersect_cones(stations, bearings)
+                region = (
+                    quality.region
+                    if not quality.region.empty
+                    else intersect_cones(stations, bearings)
+                )
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
                 if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch):
@@ -1914,6 +1943,34 @@ class HuntPolicy:
         """Q3 uses lecture ±1.01°; Q4 keeps legacy ±1.0°."""
         return Q3_ANGLE_HALF_WIDTH_DEG if not self.directional else 1.0
 
+    def _channel_locate_quality(
+        self,
+        stations: list[Point],
+        bearings: list[float],
+        silence: list[Point] | None = None,
+    ):
+        """Q4 hexbatch uses the directional corrector; Q3 and other Q4 paths stay on Problem 1."""
+        base = locate_quality(
+            stations,
+            bearings,
+            silence=silence,
+            delta_deg=self._aoa_delta_deg(),
+        )
+        if not self._use_dir_corrector:
+            return base
+        corrected, fallback = locate_quality_dir(
+            stations,
+            bearings,
+            silence=silence,
+            delta_deg=self._aoa_delta_deg(),
+            baseline=base,
+        )
+        if fallback:
+            self.corrector_fallback += 1
+            return base
+        self.corrector_used += 1
+        return corrected
+
     def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
         # One nearest intersection only — a second far fix is the star-shaped detour.
         fixes = sorted(_best_fixes(obs), key=lambda q: dist(self.bot.position, q))
@@ -1926,11 +1983,10 @@ class HuntPolicy:
         if len(obs) < 2:
             return []
         used = _diverse_obs(obs, 6)
-        quality = locate_quality(
+        quality = self._channel_locate_quality(
             [d.xy for d in used],
             [d.svd_deg for d in used],
             silence=self.book.silent_at.get(ch),
-            delta_deg=self._aoa_delta_deg(),
         )
         region = (
             quality.region
@@ -2069,17 +2125,29 @@ class HuntPolicy:
         now = self.bot.position
         silence = self.book.silent_at.get(ch)
         ordered: list[Point] = []
-        compact = list(recommend_second_sides_compact(s1, th))
-        compact.sort(key=lambda p: dist(p, now))
-        for p in compact:
-            if dist(p, s1) <= 5.0:
-                continue
-            if not front_compatible(s1, th, p):
-                continue
-            if silence and any(dist(p, q) < 35.0 for q in silence):
-                continue
-            ordered.append(p)
-            break
+        if self._use_dir_corrector:
+            env = heard_region([s1], [th], delta_deg=self._aoa_delta_deg())
+            picked = next_station_dir(
+                s1,
+                th,
+                now=now,
+                region_vertices=None if env.empty else env.vertices,
+                silence=silence,
+            )
+            if picked is not None:
+                ordered.append(picked)
+        if not ordered:
+            compact = list(recommend_second_sides_compact(s1, th))
+            compact.sort(key=lambda p: dist(p, now))
+            for p in compact:
+                if dist(p, s1) <= 5.0:
+                    continue
+                if not front_compatible(s1, th, p):
+                    continue
+                if silence and any(dist(p, q) < 35.0 for q in silence):
+                    continue
+                ordered.append(p)
+                break
         if not ordered:
             extra = next_stations(
                 s1,

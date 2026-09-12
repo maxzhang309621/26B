@@ -399,3 +399,85 @@
 |---------|----------|----------|----------|
 | T28 | `open_path_channel_order` + RH 清除循环 + 单测截断/全清 | W | CDC 2006；Held–Karp |
 | T29 | mock 多种子对照 `run_q3` vs `run_q3_batch`；更新 GIF | W | `fig_q3_path_gif.py` |
+
+---
+
+# 变更 v1.6（问题 4 定向测向定位修正器）
+
+依据用户确认的 `01-architecture.md` v1.6。问题 3 的 `locate_quality` 与 hexbatch 覆盖航路不改。默认 `run_q4()` 在 mock 验收通过后打开修正器；可用 `use_dir_corrector=False` 复现现行轨迹。
+
+## 步骤 A：单站听到后的朝向可行集与位置投影
+
+- 选定算法：**Ma–Liu 定向扇模型的逆问题 + 外切正多边形圆盘外包**。听到 ⇒ 测点落在源的 180° 前瓣且 \(\|G-S\|\le 1500\)。位置投影取问题一角扇与 `intersect_feasible_region`（工作圆 + 1500 m 外切多边形）之交，朝向保留为 180° 闭区间，不收成单值。
+- 选型理由：赛题 \(r_{\mathrm{eff}}\) 未知，外切多边形是已有 Q3 保守外包，与 \(\pm 1^\circ\) 闭区间同族；点估计/EM 朝向与赛题误差模型不符。
+- 候选：1. 外切多边形圆盘（首选）2. 仅角扇、不裁 1500 m（过宽）3. 内接多边形（可能切掉真源，禁止）
+- 参考资料：
+  - Ma, Liu. *Some problems of directional sensor networks*. Int. J. Sensor Networks, 2007. https://ranger.uta.edu/~yonghe/pubs/Directional.pdf
+  - 现有 `geometry.intersect_feasible_region` / `_disk_outer_halfplanes`
+- 接口：`heard_region(stations, bearings, delta_deg=1.0) -> IntersectionResult`；`heading_feasible(g, hears, silences) -> bool`
+- 依赖：标准库 `math`；现有 `geometry`
+
+## 步骤 B：多站听到，联合可见性收紧 \(R^\ast\)
+
+- 选定算法：**有界误差测向可行多面体（角扇半平面交）∩ 朝向区间传播**。各听点给出朝向的 180° 闭约束，在圆周上做区间交；\(G\) 可行当且仅当剩余朝向集非空。平面上对凸外包采样，可行样本经一步膨胀后取凸包作为 \(R^\ast\)（含真源的外近似）。
+- 选型理由：Gholami 等把有界 AOA 误差写成多面体顶点，与问题一核一致；朝向与位置联合、禁止先估一个 \(\hat h\) 再改坐标。采样+膨胀避免网格漏掉真源。
+- 候选：1. 圆周区间交 + 凸包外近似（首选）2. 三听点「180° 张角 / 三角形内点排除」（两站时无效，作补充）3. 高斯/CRLB/SPGD 点估计（禁止主路径）
+- 参考资料：
+  - Gholami, Wymeersch, Ström, Rydström. *Characterizing the Worst-Case Position Error in Bearing-Only Target Localization*. https://publications.lib.chalmers.se/records/fulltext/218784/local_218784.pdf
+  - 现有 `intersect_cones`、`smallest_enclosing_circle`（Welzl）
+- 接口：`locate_quality_dir(...) -> (LocateQuality, fallback: bool)`；\(r_{\mathrm{SEC}}(R^\ast)\le r_{\mathrm{SEC}}(R)\)，否则回退
+- 依赖：标准库
+
+## 步骤 C：无信号的前瓣排除（最坏 1000 m）
+
+- 选定算法：**最坏可见性排除**。仅当 \(\|Q-G\|\le 1000\) 时，从朝向可行集中挖掉「会听到 \(Q\)」的 180°；挖空则 \(G\) 不可行。禁止用 1500 m 当「听不到即可挖掉」。
+- 选型理由：与 `belief.R_RULE_OUT=1000`、Ma–Liu 扇半径一致；现有 `locate_quality` 用「圆心落入 1000 m」一刀切，会把背面无信号误判成不可清。
+- 候选：1. 朝向区间挖扇（首选）2. 沿示向共线无信号裁剪（区间挖扇的特例，不单列）3. 整盘 1000 m 挖洞（过收缩，仅作对照）
+- 参考资料：附件 1 有效半径 \([1000,1500]\)；`belief.hypothesis_hits`
+- 接口：`heading_feasible` 的 `silences` 参数；排除半径锁定 `SILENCE_R=1000`
+- 依赖：无新库
+
+## 步骤 D：\(R^\ast\) 上 20 m 清除与再测
+
+- 选定算法：沿用问题一 **Welzl 最小包围圆 + \(r_{\mathrm{SEC}}\le 20\)**；近共线 \(|\sin\beta|<0.08\) 仍强制再测。圆心处朝向不可行则禁止 `/clear`。
+- 选型理由：清除几何与全向相同，光学半径与扇区无关。
+- 参考资料：现有 `locate_quality`；荣格定理只作论文口径
+- 接口：与 `LocateQuality` 相同字段；`can_clear_20` 仍只用包围圆半径
+- 依赖：无新库
+
+## 步骤 E：第二站前瓣兼容选点
+
+- 选定算法：**\(R^\ast\) 外包圆心投影到示向轴得 \(\rho_G\)，再 `front_compatible(..., rho_g)` + 紧凑正交择近**。无合法点则沿示向前瓣代理（允许空）。
+- 选型理由：现有 `front_compatible` 已是「听点必须在未知朝向前半空间」；把名义纵向从固定 250–800 m 换成 \(R^\ast\) 投影，减少背面正交。
+- 候选：1. 紧凑正交 + \(\rho_G\)（首选）2. 在 \(R^\ast\) 上最大化最坏交会角（更重，作回退）3. 两侧都走（现行非 hexbatch，本增量不用）
+- 参考资料：`candidate.front_compatible`；Ma–Liu 半平面
+- 接口：`next_station_dir(s1, theta, now, region_vertices, silence) -> Point | None`
+- 依赖：`candidate`
+
+## 步骤 F / G：接入 hexbatch 与开关回退
+
+- 选定算法：**策略适配器**。仅 `directional and q4_path_profile==hexbatch` 时 `HuntPolicy._channel_locate_quality` 改走 `locate_quality_dir`；空集、过收缩或 \(r_{\mathrm{SEC}}\) 变大则回退问题一核并 `corrector_fallback+=1`。`use_dir_corrector=False` 时轨迹与现行 hexbatch 一致。
+- 选型理由：覆盖航路（7+12+途听）已验收，修正器只加速听后交会。
+- 参考资料：`01-architecture.md` v1.6 步骤 F/G
+- 接口：`HuntPolicy(use_dir_corrector=...)`；`run_q4(..., use_dir_corrector=True)`；统计 `dir_corrector` / `corrector_fallback` / `corrector_used`
+- 依赖：无新库
+
+## 候选尝试记录（v1.6）
+
+| 步骤 | 候选算法 | 状态 | 失败原因 |
+|------|----------|------|----------|
+| A | 外切多边形 1500 m 外包 | 采用 | — |
+| B | 圆周朝向区间交 + 采样凸包 | 采用 | — |
+| B | EM/LS 未知朝向点估计 | 禁止 | 与 \(\pm 1^\circ\) 闭区间不符 |
+| C | 1000 m 前瓣朝向挖扇 | 采用 | — |
+| C | 1500 m 听不到即挖 | 禁止 | \(r_{\mathrm{eff}}=1000\) 过收缩 |
+| E | \(\rho_G\) + 紧凑正交择近 | 采用 | — |
+| G | 过收缩回退问题一核 | 采用 | — |
+
+## 任务分配（v1.6）
+
+| 任务 ID | 实现内容 | 关联步骤 | 参考资料 |
+|---------|----------|----------|----------|
+| T30 | `src/dir_corrector.py`：`heading_feasible` / `heard_region` / `locate_quality_dir` / `next_station_dir` | A–E | Ma–Liu 2007；Gholami 最坏 AOA 多面体 |
+| T31 | `HuntPolicy` hexbatch 服务步与第二站接入；开关与 `corrector_fallback` | F,G | `01-architecture.md` v1.6 |
+| T32 | 单测包含率 / 无信号挖扇 / 回退；Q4 mock 若干种子全清 | A–G | `test_dir_corrector.py`；`test_q4.py` |

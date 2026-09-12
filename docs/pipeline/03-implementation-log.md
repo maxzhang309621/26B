@@ -121,5 +121,15 @@ python q1_cli.py
 - 冒烟：`python -m unittest discover -s tests -q` → **101 passed**；mock-8 均 ΔVT −508 s（相对 `run_q3`）。
 - 未做：未改 `run_q3()` 默认入口；正式测试禁止。
 
+## T30–T32 问题 4 定向测向定位修正器（2026-09-12）
+
+- 文件：`src/dir_corrector.py`、`src/policy.py`、`src/runner_q4.py`、`src/tests/test_dir_corrector.py`
+- **T30**：`heading_feasible`（听到 ⇒ 1500 m 前瓣；听不到 ⇒ 仅 1000 m 挖朝向）、`heard_region`、`locate_quality_dir`（过收缩 / SEC 变大回退问题一核）、`next_station_dir`
+- **T31**：仅 hexbatch 走 `_channel_locate_quality`；`use_dir_corrector=False` 复现旧轨迹；统计 `dir_corrector` / `corrector_used` / `corrector_fallback`
+- **T32**：包含率、背面无信号、单站回退、Q4 mock 全清；Q3 不改 `locate_quality`
+- 冒烟：`python -m unittest discover -s tests -q` → **147 passed**
+- 对照（重建 Source）：seed 3/4/0/5 开关 VT 打平，全清，`corrector_fallback=0`
+- 未做：官方演练；正式测试禁止；尚未把 \(R^\ast\) 变成更近的第二站以压时间
+
 
 
