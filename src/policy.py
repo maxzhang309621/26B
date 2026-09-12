@@ -63,10 +63,23 @@ DEFAULT_EXIT_RESERVE_S = 15.0
 MAX_ACTION_ATTEMPTS = 2
 # Receding-horizon open TSP (Q3 batch clear): execute a short prefix, replan.
 Q3_RH_STEP_M = 280.0
+# With >=2 AOA fixes, skip intermediate listens and drive straight to the service point.
+Q3_RH_DIRECT_MULTI_OBS = True
 Q3_RH_SWITCH_MARGIN_M = 50.0
 Q3_RH_MAX_ITERS = 480
+# During cover: clear SEC-ready sources whose extra path vs the next listen is small.
+# extra = d(now,C)+d(C,next)-d(now,next); ~140 m off-track ≈ 280 m extra.
+Q3_COVER_ENROUTE_EXTRA_M = 280.0
+# On a ring edge: second look only if a legal Q2 station sits on the segment
+# and no later hexagon vertex already provides that look.
+Q3_COVER_EDGE_SECOND = True
+Q3_COVER_EDGE_TS = (0.25, 0.4, 0.5, 0.6, 0.75)
 OPTICAL_GRID_M = 25.0
-OPTICAL_GRID_MAX_CELLS = 512
+# Grid is only for an already-small SEC. A large cone must take another bearing.
+OPTICAL_GRID_MAX_CELLS = 8
+OPTICAL_GRID_MAX_TRIES = 1
+OPTICAL_GRID_MAX_SEC_R = 28.0
+OPTICAL_GRID_ABORT_MISSES = 1
 
 
 def _perp(p: Point) -> Point:
@@ -335,6 +348,7 @@ class HuntPolicy:
         self.q3_rh_steps = 0
         self.q3_rh_replans = 0
         self.q3_rh_switches = 0
+        self.q3_cover_enroute_clears = 0
         self._set_target_n(target_n)
 
     def _set_target_n(self, n: int | None) -> None:
@@ -595,6 +609,9 @@ class HuntPolicy:
             "q3_rh_steps": self.q3_rh_steps if self._q3_batch else 0,
             "q3_rh_replans": self.q3_rh_replans if self._q3_batch else 0,
             "q3_rh_switches": self.q3_rh_switches if self._q3_batch else 0,
+            "q3_cover_enroute_clears": (
+                self.q3_cover_enroute_clears if self._q3_batch else 0
+            ),
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -664,11 +681,14 @@ class HuntPolicy:
         )
 
     def _run_omni_q3_search_cover(self) -> None:
-        """Q3 batch: visit every listen point first; clear only near-field hits."""
+        """Listen first; fold in SEC-ready clears that sit on the next edge."""
         self._cover_phase = True
+        ring = self.waypoints[1:]
         self._scan_point(self.waypoints[0], list(range(1, 21)))
         self._cover_listens.append(self.waypoints[0])
-        for wp in self.waypoints[1:]:
+        self._cover_enroute_clears(ring[0] if ring else None)
+        prev = self.waypoints[0]
+        for index, wp in enumerate(ring):
             if self._done() or self._guard_tripped():
                 break
             unknown = self.book.unknown_channels()
@@ -678,7 +698,9 @@ class HuntPolicy:
                 if ch not in channels:
                     channels.append(ch)
             if not channels:
+                self._cover_enroute_clears(ring[index + 1] if index + 1 < len(ring) else None)
                 continue
+            self._cover_edge_second_looks(prev, wp, ring[index:])
             self.route_rechecks += len(opportunistic)
             before_counts = {
                 ch: len(self.book.detections.get(ch, [])) for ch in opportunistic
@@ -690,9 +712,119 @@ class HuntPolicy:
                 or len(self.book.detections.get(ch, [])) > before_counts[ch]
                 for ch in opportunistic
             )
+            nxt = ring[index + 1] if index + 1 < len(ring) else None
+            self._cover_enroute_clears(nxt)
+            prev = wp
         self._cover_phase = False
         if not self._guard_tripped() and not self._done():
             self._route_completed = True
+
+    def _cover_edge_second_looks(
+        self, start: Point, dest: Point, future_wps: list[Point]
+    ) -> None:
+        """Listen on start→dest when that segment is a legal second station."""
+        if (
+            not Q3_COVER_EDGE_SECOND
+            or not self._q3_batch
+            or self._guard_tripped()
+            or self._done()
+        ):
+            return
+        samples = [_lerp(start, dest, t) for t in Q3_COVER_EDGE_TS]
+        groups: dict[tuple[int, int], list[int]] = {}
+        points: dict[tuple[int, int], Point] = {}
+        for ch in self.book.pending():
+            if ch in self.stuck or self._done() or self._guard_tripped():
+                continue
+            obs = self.book.detections.get(ch, [])
+            if len(obs) != 1:
+                continue
+            if self._has_future_route_probe(ch, future_wps):
+                continue
+            s1, th = obs[0].xy, obs[0].svd_deg
+            chosen: Point | None = None
+            best_off = -1.0
+            for p in samples:
+                if not in_candidate_region(s1, th, p):
+                    continue
+                off = abs(cross(sub(p, s1), unit(th)))
+                if off > best_off:
+                    best_off = off
+                    chosen = p
+            if chosen is None:
+                continue
+            key = (int(round(chosen[0])), int(round(chosen[1])))
+            groups.setdefault(key, []).append(ch)
+            points[key] = chosen
+        ordered = sorted(groups, key=lambda k: (dist(self.bot.position, points[k]), k))
+        for key in ordered:
+            if self._done() or self._guard_tripped():
+                break
+            chs = [c for c in groups[key] if c not in self.book.cleared]
+            if not chs:
+                continue
+            self.route_rechecks += len(chs)
+            before = {c: len(self.book.detections.get(c, [])) for c in chs}
+            self._scan_point(points[key], chs)
+            self._cover_listens.append(points[key])
+            self.route_recheck_hits += sum(
+                c in self.book.cleared or len(self.book.detections.get(c, [])) > before[c]
+                for c in chs
+            )
+            self._cover_enroute_clears(dest)
+
+    def _cover_enroute_points(self, ch: int) -> list[tuple[str, Point]]:
+        """Clear candidates after ≥2 looks: SEC first, then bearing intersections."""
+        obs = self.book.detections.get(ch, [])
+        if len(obs) < 2:
+            return []
+        used = _diverse_obs(obs, 4)
+        quality = locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+            delta_deg=self._aoa_delta_deg(),
+        )
+        if quality.near_collinear:
+            return []
+        out: list[tuple[str, Point]] = []
+        if quality.sec_center is not None:
+            src = "sec_center" if quality.can_clear_20 else "bearing"
+            out.append((src, quality.sec_center))
+        for q in _best_fixes(obs):
+            if all(dist(q, p) > 8.0 for _, p in out):
+                out.append(("bearing", q))
+        return out
+
+    def _cover_enroute_clears(self, next_wp: Point | None) -> None:
+        """Clear a source now iff going there barely lengthens the path to next_wp."""
+        if not self._q3_batch or self._guard_tripped() or self._done():
+            return
+        extra_lim = Q3_COVER_ENROUTE_EXTRA_M
+        tried: set[int] = set()
+        while not self._done() and not self._guard_tripped():
+            pos = self.bot.position
+            candidates: list[tuple[float, float, int, str, Point]] = []
+            for ch in self.book.pending():
+                if ch in self.stuck or ch in tried:
+                    continue
+                for source, point in self._cover_enroute_points(ch):
+                    go = dist(pos, point)
+                    if next_wp is None:
+                        extra = go
+                    else:
+                        extra = go + dist(point, next_wp) - dist(pos, next_wp)
+                    if extra > extra_lim:
+                        continue
+                    candidates.append((extra, go, ch, source, point))
+            if not candidates:
+                break
+            _extra, _go, ch, source, point = min(
+                candidates, key=lambda item: (item[0], item[1], item[2])
+            )
+            tried.add(ch)
+            if self._try_clear(point, ch, charge=False, source=source):
+                self.q3_cover_enroute_clears += 1
 
     def _batch_clear_by_path(self) -> None:
         """Receding-horizon open TSP: one move, then replan from the new pose."""
@@ -802,7 +934,9 @@ class HuntPolicy:
         return None
 
     @staticmethod
-    def _rh_step_len(gap: float) -> float:
+    def _rh_step_len(gap: float, n_obs: int = 1) -> float:
+        if Q3_RH_DIRECT_MULTI_OBS and n_obs >= 2:
+            return gap
         if gap <= Q3_RH_STEP_M:
             return gap
         return min(Q3_RH_STEP_M, max(120.0, 0.5 * gap))
@@ -817,7 +951,7 @@ class HuntPolicy:
         pos = self.bot.position
         dest = self._estimated_service_point(ch)
         gap = dist(pos, dest)
-        step = self._rh_step_len(gap)
+        step = self._rh_step_len(gap, len(obs))
         if len(obs) == 1:
             target = dest if gap <= step + 1e-6 else _lerp(pos, dest, step / max(gap, 1e-9))
             self._measure_obs(ch, target, obs)
@@ -838,12 +972,18 @@ class HuntPolicy:
                 return
             last = obs[-1]
             along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
-            self._try_clear(along, ch, charge=False, source="sec_along")
-            return
-        if not quality.near_collinear and self._try_bearing_clears(ch, obs):
-            return
-        # Not yet can_clear_20: try 25 m optical grid before more travel/creep.
-        if self._optical_grid_clear(ch):
+            if self._try_clear(along, ch, charge=False, source="sec_along"):
+                return
+            # SEC said clearable but /clear missed: take another bearing, do not raster.
+        elif not quality.near_collinear:
+            if self._try_bearing_clears(ch, obs):
+                return
+        # Large / biased region → one more measure. Grid is a single last-cell only.
+        if (
+            quality.sec_radius <= OPTICAL_GRID_MAX_SEC_R
+            and quality.sec_center is not None
+            and self._optical_grid_clear(ch)
+        ):
             return
         if gap > step + 1e-6:
             target = _lerp(pos, dest, step / gap)
@@ -1449,10 +1589,11 @@ class HuntPolicy:
         return Q3_ANGLE_HALF_WIDTH_DEG if not self.directional else 1.0
 
     def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
-        for q in _best_fixes(obs):
-            if self._try_clear(q, ch, charge=False, source="bearing"):
-                return True
-        return False
+        # One nearest intersection only — a second far fix is the star-shaped detour.
+        fixes = sorted(_best_fixes(obs), key=lambda q: dist(self.bot.position, q))
+        if not fixes:
+            return False
+        return self._try_clear(fixes[0], ch, charge=False, source="bearing")
 
     def _channel_feasible_vertices(self, ch: int) -> list[Point]:
         obs = self.book.detections.get(ch, [])
@@ -1479,11 +1620,26 @@ class HuntPolicy:
         return list(region.vertices)
 
     def _optical_grid_clear(self, ch: int, verts: list[Point] | None = None) -> bool:
-        """Video-style 25 m optical grid over the AOA feasible polygon (Q3)."""
+        """Short 25 m optical sweep over a *small* AOA region (Q3)."""
         if self.directional or ch in self.book.cleared:
             return False
+        obs = self.book.detections.get(ch, [])
+        if len(obs) >= 2:
+            used = _diverse_obs(obs, 4)
+            quality = locate_quality(
+                [d.xy for d in used],
+                [d.svd_deg for d in used],
+                silence=self.book.silent_at.get(ch),
+                delta_deg=self._aoa_delta_deg(),
+            )
+            if quality.near_collinear or quality.sec_radius > OPTICAL_GRID_MAX_SEC_R:
+                return False
         verts = verts if verts is not None else self._channel_feasible_vertices(ch)
         if len(verts) < 2:
+            return False
+        xs = [v[0] for v in verts]
+        ys = [v[1] for v in verts]
+        if math.hypot(max(xs) - min(xs), max(ys) - min(ys)) > 4.0 * OPTICAL_GRID_MAX_SEC_R:
             return False
         centers = optical_grid_centers(
             verts,
@@ -1503,10 +1659,21 @@ class HuntPolicy:
                 dist(c, pos),
             ),
         )
+        misses = 0
+        tries = 0
         for c in ordered:
+            key = (ch, int(round(c[0])), int(round(c[1])))
+            if key in self._tried_clear:
+                continue
+            if tries >= OPTICAL_GRID_MAX_TRIES:
+                break
             if self._try_clear(c, ch, charge=False, source="optical_grid"):
                 self.optical_grid_hits += 1
                 return True
+            tries += 1
+            misses += 1
+            if misses >= OPTICAL_GRID_ABORT_MISSES:
+                break
         return False
 
     def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
