@@ -145,18 +145,31 @@ def _square(ax, lim):
 # --------------------------------------------------------------------------
 
 def load_q3_official():
-    p = PROJ / "output" / "q3-results" / "official_baseline_round3_q12_10.json"
-    return json.loads(p.read_text(encoding="utf-8"))["games"]
+    """Current Q3 default: hexagon 6×1150, search-first, edge-second, RH batch."""
+    p = PROJ / "output" / "q3-results" / "official_edge_second_20260912_15.json"
+    return json.loads(p.read_text(encoding="utf-8"))["rounds"]
 
 
-def load_q4_official():
-    p = PROJ / "output" / "q4-results" / "overnight_v_nofar_10.json"
+def load_q4_current():
+    """Current Q4 default hexbatch drills (7×ρ_min + 12×1865), not the 8×995 lock."""
+    p = PROJ / "output" / "drill" / "q4-batch-summary.json"
     return json.loads(p.read_text(encoding="utf-8"))
 
 
 def drill_files(problem):
-    pat = f"p{problem}-20260911-144*.json"
-    return sorted((PROJ / "output" / "drill").glob(pat))
+    if problem == 3:
+        return sorted((PROJ / "output" / "drill").glob("p3-20260912-13*.json"))
+    return sorted((PROJ / "output" / "drill").glob("p4-20260912-135*.json"))
+
+
+def q4_enroute_on_inner(inner):
+    pts = []
+    for p in inner:
+        rd = dist(p, (0.0, 0.0))
+        if rd < 1e-9:
+            continue
+        pts.append((C.ENROUTE_R * p[0] / rd, C.ENROUTE_R * p[1] / rd))
+    return pts
 
 
 def read_actions(path):
@@ -185,7 +198,11 @@ def read_actions(path):
 
 
 def listen_set(problem):
-    return C.omni_waypoints() if problem == 3 else C.q4_listen_set()
+    if problem == 3:
+        return C.q3_waypoints()
+    wps = C.q4_opt_search_waypoints()
+    _origin, inner, _outer = C.covering_phases(wps)
+    return list(wps) + q4_enroute_on_inner(inner)
 
 
 def split_phases(actions, problem, tol=1.0):
@@ -236,26 +253,23 @@ def _front_margin_field(points, lim, n=170, n_head=36):
 
 def fig1_strategy_coverage():
     q3 = load_q3_official()
-    rc = sum(g["route_rechecks"] for g in q3)
-    hit = sum(g["route_recheck_hits"] for g in q3)
-    omni = C.omni_waypoints()
-    q4_all = C.directional_waypoints()
-    origin, inner, outer = C.covering_phases(q4_all)
-    enroute = [
-        (C.ENROUTE_R * math.cos(2 * math.pi * k / C.OMNI_RING_N),
-         C.ENROUTE_R * math.sin(2 * math.pi * k / C.OMNI_RING_N))
-        for k in range(C.OMNI_RING_N)
-    ]
+    n_enroute = sum(g["q3_cover_enroute_clears"] for g in q3)
+    n_recheck = sum(g["route_rechecks"] for g in q3)
+    hex_wps = C.q3_waypoints()
+    q4_wps = C.q4_opt_search_waypoints()
+    origin, inner, outer = C.covering_phases(q4_wps)
+    enroute = q4_enroute_on_inner(inner)
+    inner_r = C.q4_opt_inner_r()
 
     fig, axes = plt.subplots(2, 2, figsize=(183 * MM, 178 * MM))
 
-    # (a) Q3 covering tour ---------------------------------------------------
     ax = axes[0][0]
     _arena(ax)
-    ring = omni[1:]
-    order = [omni[0]] + ring
-    ax.plot([p[0] for p in order], [p[1] for p in order], color=COL_Q3, lw=0.7,
-            alpha=0.55, zorder=2)
+    ring = hex_wps[1:]
+    ax.plot([hex_wps[0][0], ring[0][0]], [hex_wps[0][1], ring[0][1]],
+            color=COL_Q3, lw=0.7, alpha=0.55, zorder=2)
+    ax.plot([p[0] for p in ring] + [ring[0][0]], [p[1] for p in ring] + [ring[0][1]],
+            color=COL_Q3, lw=0.7, alpha=0.55, zorder=2)
     ax.add_patch(Circle(ring[0], R_EFF, fill=True, facecolor=COL_Q3, alpha=0.10,
                         edgecolor=COL_Q3, lw=0.6, ls=(0, (3, 2)), zorder=1))
     ax.scatter([p[0] for p in ring], [p[1] for p in ring], s=34, c=COL_Q3,
@@ -266,43 +280,46 @@ def fig1_strategy_coverage():
         ax.annotate(str(i), p, textcoords="offset points", xytext=(6, 5),
                     fontsize=6.5, color=BLACK)
     ax.annotate("$r_{\\rm eff}=1000$ m", ring[0], textcoords="offset points",
-                xytext=(-4, -74), fontsize=6.5, color=COL_Q3, ha="center")
+                xytext=(8, -56), fontsize=6.5, color=COL_Q3, ha="left")
     _square(ax, 2050)
-    _title(ax, "问题3 航路：原点全扫 20 信道 → 8×1200 m 环按固定序访问\n"
-               f"途中顺路复测 {rc} 次，命中 {hit} 次（{100.0 * hit / rc:.0f}%）")
+    _title(ax, "问题3：原点全扫 → 正六边形 6×1150 m（相位 10°）先搜后清\n"
+               f"官方 15 局环边补二测 {n_recheck} 次，顺路清 {n_enroute} 次")
     ax.legend(handles=[
         Line2D([0], [0], marker="D", color="w", markerfacecolor=LAYER_COLORS["origin"],
                markersize=6, label="原点全扫"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=COL_Q3,
-               markersize=6, label="内环 8×1200 m"),
+               markersize=6, label="内环 6×1150 m"),
     ], loc="lower left", fontsize=6.5, handletextpad=0.4, borderaxespad=0.3)
     _label(ax, "a")
 
-    # (b) Q4 listen layers ---------------------------------------------------
     ax = axes[0][1]
     _arena(ax)
     ax.add_patch(Wedge(inner[0], R_EFF, -90.0, 90.0, facecolor=COL_FIX, alpha=0.14,
                        edgecolor=COL_FIX, lw=0.6, ls=(0, (3, 2)), zorder=1))
-    ax.annotate("定向源 180° 前瓣 ∩ 1000 m", (inner[0][0] + 480, 1450.0),
-                fontsize=6.5, color="#B35806", ha="center")
+    ax.plot([p[0] for p in inner] + [inner[0][0]], [p[1] for p in inner] + [inner[0][1]],
+            color=LAYER_COLORS["inner"], lw=0.7, alpha=0.5, zorder=2)
+    ax.plot([p[0] for p in outer] + [outer[0][0]], [p[1] for p in outer] + [outer[0][1]],
+            color=LAYER_COLORS["outer"], lw=0.7, alpha=0.5, zorder=2)
+    ax.plot([0, inner[0][0]], [0, inner[0][1]], color=GREY, lw=0.6, ls=(0, (3, 2)),
+            zorder=1)
+    ax.annotate("同径向", (inner_r * 0.55, 80), fontsize=6.5, color=GREY)
     for pts, key, lab, mk, sz in (
         ([origin], "origin", "原点全扫", "D", 46),
-        (enroute, "enroute", "途听 8×900 m", "^", 30),
-        (inner, "inner", "内环 8×1200 m", "o", 34),
-        (outer, "outer", "外环 12×2100 m", "s", 30),
+        (enroute, "enroute", "出发停听 7×900 m", "^", 28),
+        (inner, "inner", f"内环 7×{inner_r:.0f} m", "o", 34),
+        (outer, "outer", "外环 12×1865 m", "s", 30),
     ):
         ax.scatter([p[0] for p in pts], [p[1] for p in pts], s=sz,
                    c=LAYER_COLORS[key], marker=mk, zorder=4, label=lab,
                    edgecolors="white", linewidths=0.4)
-    _square(ax, 2400)
-    _title(ax, "问题4 航路：29 个听点分四层，内/外环按最近邻访问\n"
-               "外环阶段启用「假定剩余源为定向」剪枝")
+    _square(ax, 2300)
+    _title(ax, "问题4 hexbatch：证书听点 7×ρ_min + 12×1865，先搜后清\n"
+               "证书不含途听环；从原点去内环时仍可在 900 m 停听")
     ax.legend(loc="lower left", fontsize=6.5, handletextpad=0.4, borderaxespad=0.3)
     _label(ax, "b")
 
-    # (c) Q3 omni coverage field --------------------------------------------
     ax = axes[1][0]
-    gx, gy, fld = _min_dist_field(omni, ARENA_R, n=260)
+    gx, gy, fld = _min_dist_field(hex_wps, ARENA_R, n=260)
     mask = gx ** 2 + gy ** 2 > ARENA_R ** 2
     fld_in = np.where(mask, np.nan, fld)
     worst3 = float(np.nanmax(fld_in))
@@ -311,7 +328,7 @@ def fig1_strategy_coverage():
     cs = ax.contour(gx, gy, fld_in, levels=[worst3 - 1.0], colors=[ACCENT_RED],
                     linewidths=0.8)
     ax.clabel(cs, fmt=f"{worst3:.0f} m", fontsize=6, inline=True)
-    ax.scatter([p[0] for p in omni], [p[1] for p in omni], s=12, c="white",
+    ax.scatter([p[0] for p in hex_wps], [p[1] for p in hex_wps], s=12, c="white",
                zorder=4, edgecolors=BLACK, linewidths=0.4)
     _arena(ax, lw=0.6)
     _square(ax, 1900)
@@ -319,13 +336,12 @@ def fig1_strategy_coverage():
     cb.ax.set_title("到最近\n听点 (m)", fontsize=6.5, pad=4, linespacing=1.3)
     cb.ax.tick_params(labelsize=6.5)
     cb.outline.set_linewidth(0.4)
-    _title(ax, "全向覆盖判据：场内最坏距离 "
-               f"{worst3:.0f} m < 1000 m\n余量 {R_EFF - worst3:.0f} m，8×1200 m 环成立")
+    _title(ax, f"六边形全向覆盖：最坏 {worst3:.0f} m < 1000 m\n"
+               f"余量 {R_EFF - worst3:.0f} m，解析证书通过")
     _label(ax, "c")
 
-    # (d) Q4 directional front-lobe margin ----------------------------------
     ax = axes[1][1]
-    wps = C.q4_listen_set()
+    wps = q4_wps
     gx, gy, marg = _front_margin_field(wps, ARENA_R, n=190)
     mask = gx ** 2 + gy ** 2 > ARENA_R ** 2
     marg_in = np.where(mask, np.nan, marg)
@@ -333,25 +349,29 @@ def fig1_strategy_coverage():
     mmax = float(np.nanmax(marg_in))
     div = LinearSegmentedColormap.from_list("cns_div", [ACCENT_RED, "#F7F7F7",
                                                         CATEGORICAL[0]])
-    norm = mpl.colors.TwoSlopeNorm(vmin=mmin, vcenter=0.0, vmax=mmax)
+    norm = mpl.colors.TwoSlopeNorm(vmin=min(mmin, -1.0), vcenter=0.0, vmax=max(mmax, 1.0))
     im = ax.pcolormesh(gx, gy, np.ma.array(marg, mask=mask), cmap=div, norm=norm,
                        shading="auto", rasterized=True)
-    neg = marg_in < 0
-    radii = np.hypot(gx, gy)[neg]
-    r_lo, r_hi = float(radii.min()), float(radii.max())
-    ax.contour(gx, gy, np.where(mask, np.nan, marg), levels=[0.0],
-               colors=[ACCENT_RED], linewidths=0.7)
+    neg = np.isfinite(marg_in) & (marg_in < 0)
+    if np.any(neg):
+        radii = np.hypot(gx, gy)[neg]
+        r_lo, r_hi = float(radii.min()), float(radii.max())
+        ax.contour(gx, gy, np.where(mask, np.nan, marg), levels=[0.0],
+                   colors=[ACCENT_RED], linewidths=0.7)
+        frac = float(neg.sum()) / float(np.isfinite(marg_in).sum()) * 100.0
+        cap = f"最差 {mmin:.0f} m，负余量格点 {frac:.2f}%"
+    else:
+        r_lo, r_hi, frac = None, None, 0.0
+        cap = f"密网格下最差余量 {mmin:.0f} m，全场为正"
     ax.scatter([p[0] for p in wps], [p[1] for p in wps], s=8, c="white",
                zorder=4, edgecolors=BLACK, linewidths=0.35)
     _arena(ax, lw=0.6)
-    _square(ax, 2250)
+    _square(ax, 2100)
     cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cb.ax.set_title("余量 (m)", fontsize=6.5, pad=4)
     cb.ax.tick_params(labelsize=6.5)
     cb.outline.set_linewidth(0.4)
-    frac = float(neg.sum()) / float(np.isfinite(marg_in).sum()) * 100.0
-    _title(ax, "定向覆盖判据（最坏朝向）：红色为余量为负的薄弱区\n"
-               f"$r\\approx${r_lo:.0f}–{r_hi:.0f} m，占场内 {frac:.1f}%，最差 {mmin:.0f} m")
+    _title(ax, "定向覆盖判据（证书听点，不含 900 m 途听）\n" + cap)
     _label(ax, "d")
 
     fig.subplots_adjust(wspace=0.42, hspace=0.30)
@@ -360,10 +380,12 @@ def fig1_strategy_coverage():
     plt.close(fig)
     return stem, {
         "q3_worst_m": worst3,
+        "q4_inner_r": inner_r,
         "q4_min_margin_m": mmin,
         "q4_weak_band_m": [r_lo, r_hi],
         "q4_neg_fraction_pct": frac,
-        "q3_recheck": [rc, hit],
+        "q3_enroute_clears": n_enroute,
+        "q3_rechecks": n_recheck,
     }
 
 
@@ -506,8 +528,8 @@ def _draw_run(ax, actions, problem, lim):
 
 
 def fig3_execution():
-    f3 = PROJ / "output" / "drill" / "p3-20260911-144535.json"
-    f4 = PROJ / "output" / "drill" / "p4-20260911-144730.json"
+    f3 = PROJ / "output" / "drill" / "p3-20260912-130508.json"
+    f4 = PROJ / "output" / "drill" / "p4-20260912-135326.json"
     d3, a3 = read_actions(f3)
     d4, a4 = read_actions(f4)
     split_phases(a3, 3)
@@ -518,15 +540,15 @@ def fig3_execution():
     ax = axes[0]
     _draw_run(ax, a3, 3, 2050)
     s = d3["stats"]
-    _title(ax, f"问题3 演练一局：清除 {s['cleared']} 个，{s['virtual_time_s']:.0f} s\n"
-               f"测量 {s['n_measure']} 次，清除失败 {s['clear_miss']} 次")
+    _title(ax, f"问题3 hexagon：清 {s['cleared']}，{s['virtual_time_s']:.0f} s\n"
+               f"测量 {s['n_measure']}，失败 {s['clear_miss']}")
     _label(ax, "a")
 
     ax = axes[1]
-    _draw_run(ax, a4, 4, 2400)
+    _draw_run(ax, a4, 4, 2200)
     s = d4["stats"]
-    _title(ax, f"问题4 演练一局：清除 {s['cleared']} 个，{s['virtual_time_s']:.0f} s\n"
-               f"测量 {s['n_measure']} 次，清除失败 {s['clear_miss']} 次")
+    _title(ax, f"问题4 hexbatch：清 {s['cleared']}，{s['virtual_time_s']:.0f} s\n"
+               f"测量 {s['n_measure']}，失败 {s['clear_miss']}")
     _label(ax, "b")
 
     fig.legend(handles=[
@@ -559,8 +581,8 @@ def fig3_execution():
         ax.plot(grid, stacked.mean(axis=0), color=color, lw=1.6, zorder=4, label=lab)
     ax.set_xlabel("虚拟时间 (min)")
     ax.set_ylabel("累计清除源数")
-    ax.legend(loc="lower right", fontsize=7)
-    _title(ax, "清除进度：细线为单局，粗线为逐时刻均值\n（各 10 局本地演练日志，非官方基线局）")
+    ax.legend(loc="upper left", fontsize=7)
+    _title(ax, "清除进度：细线单局，粗线均值\nQ3 先搜后清，Q4 外环后再批量清")
     _label(ax, "c")
 
     fig.subplots_adjust(wspace=0.40)
@@ -576,13 +598,12 @@ def fig3_execution():
 
 def fig4_outcome_analysis():
     q3 = load_q3_official()
-    q4 = load_q4_official()
+    q4 = load_q4_current()
     t3 = np.array([g["virtual_time_s"] for g in q3]) / 60.0
     t4 = np.array([g["stats"]["virtual_time_s"] for g in q4]) / 60.0
 
     fig, axes = plt.subplots(2, 2, figsize=(183 * MM, 136 * MM))
 
-    # (a) time distribution --------------------------------------------------
     ax = axes[0][0]
     rng = np.random.default_rng(0)
     for i, (vals, color) in enumerate(((t3, COL_Q3), (t4, COL_Q4))):
@@ -596,12 +617,14 @@ def fig4_outcome_analysis():
     ax.set_xticklabels(["问题3", "问题4"])
     ax.set_xlim(-0.55, 1.75)
     ax.set_ylabel("虚拟时间 (min)")
-    _title(ax, "官方演练各 10 局，均 10/10 全清\n每点一局，横线为均值")
+    n3c = sum(1 for g in q3 if g["ratio"] >= 1)
+    n4c = sum(1 for g in q4 if g["ratio"] >= 1)
+    _title(ax, f"问题3 官方 {len(q3)} 局 {n3c}/{len(q3)} 全清；问题4 hexbatch {len(q4)} 局 {n4c}/{len(q4)} 全清\n"
+               "每点一局，横线为均值")
     _label(ax, "a")
 
-    # (b) source count vs cost per source ------------------------------------
     ax = axes[0][1]
-    n3 = np.array([g["official_jammer_count"] for g in q3], float)
+    n3 = np.array([g["jammer_count"] for g in q3], float)
     p3 = np.array([g["virtual_time_s"] for g in q3]) / n3
     n4 = np.array([g["official"]["jammer_count"] for g in q4], float)
     p4 = np.array([g["stats"]["virtual_time_s"] for g in q4]) / n4
@@ -617,14 +640,13 @@ def fig4_outcome_analysis():
     ax.set_xlabel("干扰源个数")
     ax.set_ylabel("单源平均耗时 (s)")
     ax.legend(loc="upper right", fontsize=6.8)
-    _title(ax, f"覆盖航路是固定成本，源越多摊得越薄\n"
+    _title(ax, f"覆盖主干是固定成本，源越多摊得越薄\n"
                f"问题3 $r$={stats_b['问题3']['r']:.2f}（{stats_b['问题3']['slope']:.0f} s/源），"
                f"问题4 $r$={stats_b['问题4']['r']:.2f}（{stats_b['问题4']['slope']:.0f} s/源）")
     _label(ax, "b")
 
-    # (c) time composition ---------------------------------------------------
     ax = axes[1][0]
-    idx = np.arange(1, 11)
+    idx = np.arange(1, len(q4) + 1)
     tot = np.array([g["stats"]["virtual_time_s"] for g in q4])
     travel = np.array([g["stats"]["travel_s"] for g in q4]) / tot * 100.0
     detect = np.array([g["stats"]["detect_s"] for g in q4]) / tot * 100.0
@@ -639,25 +661,29 @@ def fig4_outcome_analysis():
     ax.set_ylim(0, 100)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.40), ncol=3, fontsize=6.8,
               handletextpad=0.4, columnspacing=1.4)
-    _title(ax, f"问题4 时间构成：行驶占 {travel.min():.0f}–{travel.max():.0f}%\n"
-               f"行驶时间与总时间 $r$={r_tt:.2f}，外环空驶主导")
+    _title(ax, f"问题4 hexbatch 时间构成：行驶占 {travel.min():.0f}–{travel.max():.0f}%\n"
+               f"行驶与总时间 $r$={r_tt:.2f}")
     _label(ax, "c")
 
-    # (d) directional sources vs failed clears -------------------------------
     ax = axes[1][1]
-    dir_n = np.array([g["official"]["directional_jammer_count"] for g in q4], float)
-    miss = np.array([g["stats"]["clear_miss"] for g in q4], float)
-    ax.scatter(dir_n, miss, s=30, c=COL_Q4, zorder=3, edgecolors="white",
-               linewidths=0.4)
-    k, b = np.polyfit(dir_n, miss, 1)
-    xs = np.linspace(dir_n.min() - 0.6, dir_n.max() + 0.6, 40)
-    ax.plot(xs, k * xs + b, color=BLACK, lw=0.9, ls=(0, (4, 2)), zorder=2)
-    r_dm = float(np.corrcoef(dir_n, miss)[0, 1])
-    ax.set_xlabel("定向干扰源个数")
-    ax.set_ylabel("清除失败次数")
-    ax.set_xticks(np.arange(0, int(dir_n.max()) + 2, 2))
-    _title(ax, f"定向源的代价出现在清除环节，而非搜索\n"
-               f"问题4 官方 10 局，$r$={r_dm:.2f}")
+    idx3 = np.arange(1, len(q3) + 1)
+    bb = np.array([g["backbone_scan_s"] for g in q3])
+    cd = np.array([g["clear_detour_s"] for g in q3])
+    loc = np.array([g["localization_s"] for g in q3])
+    move = bb + cd + loc
+    ax.bar(idx3, 100.0 * bb / move, color=COL_Q3, width=0.72, label="主干扫描")
+    ax.bar(idx3, 100.0 * loc / move, bottom=100.0 * bb / move, color=CATEGORICAL[3],
+           width=0.72, label="定位补测")
+    ax.bar(idx3, 100.0 * cd / move, bottom=100.0 * (bb + loc) / move, color=GREY,
+           width=0.72, label="清除折返")
+    ax.set_xticks([1, 5, 10, 15])
+    ax.set_xlabel("问题3 局序号")
+    ax.set_ylabel("行驶结构占比 (%)")
+    ax.set_ylim(0, 100)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.40), ncol=3, fontsize=6.8,
+              handletextpad=0.4, columnspacing=1.4)
+    _title(ax, f"问题3 行驶结构：清除折返均 {cd.mean():.0f} s，主干均 {bb.mean():.0f} s\n"
+               "边补二测后折返仍是时间大头")
     _label(ax, "d")
 
     fig.subplots_adjust(wspace=0.34, hspace=0.62)
@@ -668,7 +694,8 @@ def fig4_outcome_analysis():
         "q3_mean_min": float(t3.mean()), "q4_mean_min": float(t4.mean()),
         "source_vs_cost": stats_b,
         "r_travel_total": r_tt,
-        "r_dir_miss": r_dm,
+        "q3_mean_clear_detour_s": float(cd.mean()),
+        "q3_mean_backbone_s": float(bb.mean()),
     }
 
 
@@ -707,64 +734,73 @@ def _wrap_code(code, width=11):
 
 def fig5_result_tables():
     q3 = load_q3_official()
-    q4 = load_q4_official()
-    fig, axes = plt.subplots(2, 1, figsize=(183 * MM, 190 * MM),
-                             height_ratios=[0.80, 1.20])
+    q4 = load_q4_current()
+    fig, axes = plt.subplots(2, 1, figsize=(183 * MM, 210 * MM),
+                             height_ratios=[1.15, 0.95])
 
     ax = axes[0]
     ax.axis("off")
-    ax.text(0.0, 1.03, "表1  问题3 官方演练 10 局（基线 q3-round3-q12）",
+    ax.text(0.0, 1.02, "表1  问题3 官方演练 15 局（hexagon 6×1150 + 边补二测 + RH）",
             transform=ax.transAxes, fontsize=8, ha="left", va="bottom")
-    cols = ["局", "干扰源数", "清除数", "虚拟时间 (s)", "顺路复测", "复测命中", "全清"]
-    rows = [[str(g["index"]), str(g["official_jammer_count"]), str(g["cleared"]),
-             f"{g['virtual_time_s']:.1f}", str(g["route_rechecks"]),
-             str(g["route_recheck_hits"]), "是"] for g in q3]
+    cols = ["局", "源数", "清除", "虚拟时间 (s)", "秒/源", "顺路清", "复测", "全清"]
+    rows = [[
+        str(g["index"]), str(g["jammer_count"]), str(g["cleared"]),
+        f"{g['virtual_time_s']:.1f}", f"{g['s_per_src']:.0f}",
+        str(g["q3_cover_enroute_clears"]), str(g["route_rechecks"]),
+        "是" if g["ratio"] >= 1 else "否",
+    ] for g in q3]
     mean3 = sum(g["virtual_time_s"] for g in q3) / len(q3)
-    rows.append(["均值", "—", "—", f"{mean3:.1f}",
-                 str(sum(g["route_rechecks"] for g in q3)),
-                 str(sum(g["route_recheck_hits"] for g in q3)),
-                 f"{sum(1 for g in q3 if g['ratio'] >= 1)}/{len(q3)}"])
+    mean_sps = sum(g["s_per_src"] for g in q3) / len(q3)
+    rows.append([
+        "均值", f"{sum(g['jammer_count'] for g in q3)/len(q3):.1f}", "—",
+        f"{mean3:.1f}", f"{mean_sps:.0f}",
+        str(sum(g["q3_cover_enroute_clears"] for g in q3)),
+        str(sum(g["route_rechecks"] for g in q3)),
+        f"{sum(1 for g in q3 if g['ratio'] >= 1)}/{len(q3)}",
+    ])
     t1 = ax.table(cellText=rows, colLabels=cols, loc="center", cellLoc="center",
-                  bbox=[0.0, 0.0, 1.0, 0.94])
-    _style_table(t1, fontsize=6.6, row_scale=1.3)
+                  bbox=[0.0, 0.0, 1.0, 0.95])
+    _style_table(t1, fontsize=6.2, row_scale=1.18)
     _label(ax, "a")
 
     ax = axes[1]
     ax.axis("off")
-    ax.text(0.0, 1.02, "表2  问题4 官方演练 10 局（基线 v_nofar 覆盖航路）",
+    ax.text(0.0, 1.02, "表2  问题4 hexbatch 演练 10 局（当前默认 7×997 + 12×1865）",
             transform=ax.transAxes, fontsize=8, ha="left", va="bottom")
-    cols4 = ["局", "案例编码", "源数", "定向", "虚拟时间 (s)", "行驶 (s)",
-             "探测 (s)", "测量次数", "清除失败", "全清"]
+    cols4 = ["局", "案例编码", "源数", "定向", "虚拟时间 (s)", "秒/源",
+             "行驶 (s)", "探测 (s)", "清除失败", "全清"]
     rows4 = []
     for g in q4:
         o, s = g["official"], g["stats"]
         rows4.append([
             str(g["index"]), _wrap_code(o["case_code"]), str(o["jammer_count"]),
             str(o["directional_jammer_count"]), f"{s['virtual_time_s']:.1f}",
-            f"{s['travel_s']:.0f}", f"{s['detect_s']:.0f}", str(s["n_measure"]),
+            f"{s['virtual_time_s']/o['jammer_count']:.0f}",
+            f"{s['travel_s']:.0f}", f"{s['detect_s']:.0f}",
             str(s["clear_miss"]), "是" if g["ratio"] >= 1 else "否",
         ])
     n = len(q4)
+    mean4 = sum(g["stats"]["virtual_time_s"] for g in q4) / n
+    mean4_sps = sum(g["stats"]["virtual_time_s"] / g["official"]["jammer_count"] for g in q4) / n
     rows4.append([
-        "均值", "—", "—", "—",
-        f"{sum(g['stats']['virtual_time_s'] for g in q4) / n:.1f}",
+        "均值", "—", "—", "—", f"{mean4:.1f}", f"{mean4_sps:.0f}",
         f"{sum(g['stats']['travel_s'] for g in q4) / n:.0f}",
         f"{sum(g['stats']['detect_s'] for g in q4) / n:.0f}",
-        f"{sum(g['stats']['n_measure'] for g in q4) / n:.0f}",
         f"{sum(g['stats']['clear_miss'] for g in q4) / n:.1f}",
         f"{sum(1 for g in q4 if g['ratio'] >= 1)}/{n}",
     ])
     t2 = ax.table(cellText=rows4, colLabels=cols4, loc="center", cellLoc="center",
                   bbox=[0.0, 0.0, 1.0, 0.94],
-                  colWidths=[0.05, 0.17, 0.07, 0.07, 0.13, 0.10, 0.10, 0.10, 0.10, 0.07])
-    _style_table(t2, fontsize=6.0, row_scale=1.5)
+                  colWidths=[0.05, 0.16, 0.07, 0.07, 0.13, 0.09, 0.10, 0.10, 0.12, 0.07])
+    _style_table(t2, fontsize=6.0, row_scale=1.45)
     _label(ax, "b")
 
-    fig.subplots_adjust(hspace=0.16)
+    fig.subplots_adjust(hspace=0.14)
     stem = OUT / "F5_result_tables"
     save_cns_figure(fig, str(stem))
     plt.close(fig)
-    return stem, {"q3_mean_s": mean3}
+    return stem, {"q3_mean_s": mean3, "q4_mean_s": mean4, "q3_mean_s_per_src": mean_sps,
+                  "q4_mean_s_per_src": mean4_sps}
 
 
 def main():
