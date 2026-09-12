@@ -109,14 +109,11 @@ def run_hunt(
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
 ) -> dict[str, Any]:
-    """Run the hunt after /enter. Q4 practice uses hexbatch (search then batch clear).
-
-    Does not change ``run_q4()`` (submission baseline remains ``v_nofar``).
-    """
+    """Run the hunt after /enter. Q4 uses the default hexbatch policy."""
     if problem == "4":
-        from runner_q4 import run_q4_hexbatch
+        from runner_q4 import run_q4
 
-        return run_q4_hexbatch(
+        return run_q4(
             bot,
             target_n=target_n,
             do_enter=False,

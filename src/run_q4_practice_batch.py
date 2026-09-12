@@ -1,7 +1,7 @@
 """Q4 PRACTICE-only batch. Never starts or clicks 正式测试. Never runs 问题3.
 
-Hunt path: ``run_q4_hexbatch`` (7×ρ_min inner + 12×1865 outer, search then
-dynamic clear). Submission baseline ``run_q4()`` stays ``v_nofar``.
+Hunt path: ``run_q4()`` / hexbatch (7×ρ_min inner + 12×1865 outer, search then
+RH clear). Legacy ``v_nofar`` remains available as ``run_q4_nofar()``.
 
 Hard rules:
 - No coordinate / image / SendKeys clicks (正式 sits next to 演练).
