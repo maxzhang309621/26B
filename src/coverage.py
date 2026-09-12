@@ -23,6 +23,11 @@ Q4_OUTER_FULL_N = OUTER_RING_N
 Q4_OUTER_LITE_R = 1900.0
 Q4_OUTER_LITE_N = 11
 Q4_DIR_FULL_OUTER_MIN = 8
+# Dense-certified shortest Q4 detection tour: heptagon inner + dodecagon outer.
+Q4_OPT_INNER_N = 7
+Q4_OPT_OUTER_N = 12
+Q4_OPT_OUTER_R = 1865.0
+Q4_OPT_ALIGN = "radial"
 ENROUTE_R = 900.0
 INNER_R_MAX = 1550.0  # origin / 1200 m ring / optional mid ring vs outer ring
 
@@ -77,9 +82,10 @@ def directional_waypoints(
     """Omni inner cover plus one outer ring.
 
     Near-center outward sources (r_eff=1000 m) are heard by a 900 m stop on
-    the way to the 1200 m inner ring (policy), not a separate mid ring.
+    the way to the inner ring (policy), not a separate mid ring.
     A 12-point ring at 2100 m keeps a listen in the 180° front half-plane.
-    Q4 inner stays origin + 8×1200 m (6 inner fails directional_front_cover_ok).
+    Default Q4 inner stays origin + 8×1200 m. Hexbatch uses Q3 hexagon inner
+    via ``q4_hexagon_waypoints``; six inner points alone fail front-cover.
     """
     pts = list(inner if inner is not None else omni_waypoints())
     if mid_n > 0:
@@ -120,6 +126,18 @@ def _in_front_halfplane(src: Point, heading_deg: float, probe: Point) -> bool:
     return abs(rel) <= 90.0 + 1e-9
 
 
+def q4_hexagon_waypoints(
+    outer_r: float = OUTER_RING_R,
+    outer_n: int = OUTER_RING_N,
+) -> list[Point]:
+    """Q4 hexbatch cover: Q3 hexagon inner plus the directional outer ring."""
+    return directional_waypoints(
+        inner=q3_waypoints(),
+        outer_r=outer_r,
+        outer_n=outer_n,
+    )
+
+
 def q4_listen_set(waypoints: Sequence[Point] | None = None) -> list[Point]:
     """Covering waypoints plus the 900 m enroute stops used by HuntPolicy."""
     pts = list(waypoints if waypoints is not None else directional_waypoints())
@@ -127,6 +145,11 @@ def q4_listen_set(waypoints: Sequence[Point] | None = None) -> list[Point]:
         a = 2.0 * math.pi * k / OMNI_RING_N
         pts.append((ENROUTE_R * math.cos(a), ENROUTE_R * math.sin(a)))
     return pts
+
+
+def q4_hex_listen_set(waypoints: Sequence[Point] | None = None) -> list[Point]:
+    """Hexbatch covering set: the exact search waypoints, no extra 900 m ring."""
+    return list(waypoints if waypoints is not None else q4_opt_search_waypoints())
 
 
 def directional_front_cover_ok(
@@ -155,6 +178,27 @@ def directional_front_cover_ok(
         n_radial = 6 if n_radial is None else n_radial
         n_ang = 48 if n_ang is None else n_ang
         n_headings = 24 if n_headings is None else n_headings
+    return _front_cover_ok_on(
+        wps,
+        cover_r=cover_r,
+        arena_r=arena_r,
+        n_radial=n_radial,
+        n_ang=n_ang,
+        n_headings=n_headings,
+    )
+
+
+def _front_cover_ok_on(
+    listens: Sequence[Point],
+    cover_r: float = COVER_R,
+    arena_r: float = ARENA_R,
+    *,
+    n_radial: int = 6,
+    n_ang: int = 48,
+    n_headings: int = 24,
+) -> bool:
+    """Directional front-disk cover on an exact listen set (no extra enroute)."""
+    wps = list(listens)
     headings = [i * (360.0 / n_headings) for i in range(n_headings)]
     for g in _sample_disk(arena_r, n_radial=n_radial, n_ang=n_ang):
         for h in headings:
@@ -163,6 +207,116 @@ def directional_front_cover_ok(
             ):
                 return False
     return True
+
+
+def _regular_polygon(radius: float, n: int, phase_rad: float = 0.0) -> list[Point]:
+    if n < 1:
+        return []
+    return [
+        (
+            radius * math.cos(2.0 * math.pi * k / n + phase_rad),
+            radius * math.sin(2.0 * math.pi * k / n + phase_rad),
+        )
+        for k in range(n)
+    ]
+
+
+def q4_outer_phase_rad(n_inner: int, n_outer: int, align: str) -> float:
+    """Outer ring phase relative to inner vertices at phase 0.
+
+    radial: share the 0° ray (inner rays are a subset when n_outer is a multiple).
+    stagger: shift by half an outer step so vertices sit in each other's gaps.
+    """
+    del n_inner
+    if align == "stagger":
+        return math.pi / n_outer if n_outer else 0.0
+    if align != "radial":
+        raise ValueError("align must be 'radial' or 'stagger'")
+    return 0.0
+
+
+def q4_double_ring_waypoints(
+    n_inner: int,
+    inner_r: float,
+    n_outer: int,
+    outer_r: float,
+    *,
+    align: str = "radial",
+    inner_phase_rad: float = 0.0,
+    enroute_r: float | None = ENROUTE_R,
+) -> list[Point]:
+    """Origin + optional inner-ray enroute + inner n-gon + outer m-gon."""
+    if n_inner < 1 or n_outer < 1:
+        raise ValueError("ring vertex counts must be positive")
+    outer_phase = inner_phase_rad + q4_outer_phase_rad(n_inner, n_outer, align)
+    pts: list[Point] = [(0.0, 0.0)]
+    inner = _regular_polygon(inner_r, n_inner, inner_phase_rad)
+    if enroute_r is not None and enroute_r > 1e-9:
+        pts.extend(_regular_polygon(enroute_r, n_inner, inner_phase_rad))
+    pts.extend(inner)
+    pts.extend(_regular_polygon(outer_r, n_outer, outer_phase))
+    return pts
+
+
+def q4_opt_inner_r(arena_r: float = ARENA_R, cover_r: float = COVER_R) -> float:
+    """Shortest heptagon circumradius that already omni-covers with the origin."""
+    interval = regular_ring_rho_interval(Q4_OPT_INNER_N, arena_r=arena_r, cover_r=cover_r)
+    if interval is None:
+        raise RuntimeError("n=7 must admit an omni ring interval for 1800/1000")
+    return interval[0]
+
+
+def q4_opt_search_waypoints(
+    *,
+    outer_r: float = Q4_OPT_OUTER_R,
+    outer_n: int = Q4_OPT_OUTER_N,
+) -> list[Point]:
+    """Minimum-time dense-feasible Q4 listen set: 7×ρ_min + 12×1865, same radial, no extra 900 m ring."""
+    return q4_double_ring_waypoints(
+        Q4_OPT_INNER_N,
+        q4_opt_inner_r(),
+        outer_n,
+        outer_r,
+        align=Q4_OPT_ALIGN,
+        enroute_r=None,
+    )
+
+
+def q4_double_ring_cover_ok(
+    n_inner: int,
+    inner_r: float,
+    n_outer: int,
+    outer_r: float,
+    *,
+    align: str = "radial",
+    inner_phase_rad: float = 0.0,
+    enroute_r: float | None = ENROUTE_R,
+    cover_r: float = COVER_R,
+    arena_r: float = ARENA_R,
+    n_radial: int = 6,
+    n_ang: int = 48,
+    n_headings: int = 24,
+) -> dict[str, bool]:
+    """Omni disk cover and directional front-disk cover on the exact listen set."""
+    listens = q4_double_ring_waypoints(
+        n_inner,
+        inner_r,
+        n_outer,
+        outer_r,
+        align=align,
+        inner_phase_rad=inner_phase_rad,
+        enroute_r=enroute_r,
+    )
+    omni = coverage_ok(listens, cover_r=cover_r, arena_r=arena_r)
+    directional = _front_cover_ok_on(
+        listens,
+        cover_r=cover_r,
+        arena_r=arena_r,
+        n_radial=n_radial,
+        n_ang=n_ang,
+        n_headings=n_headings,
+    )
+    return {"omni": omni, "directional": directional, "ok": omni and directional}
 
 
 def sector_fused_order(waypoints: Sequence[Point], n_bins: int = OUTER_RING_N) -> list[Point]:
@@ -210,13 +364,53 @@ def open_path_channel_order(start: Point, points: dict[int, Point]) -> list[int]
     return out
 
 
+def nearest_open_path_channel_order(start: Point, points: dict[int, Point]) -> list[int]:
+    """Pin the first hop to the nearest city, then open TSP the rest.
+
+    Euclidean open TSP may leave a nearby isolated city for last when a far
+    cluster is cheaper overall.  Pinning the nearest hop forbids that skip;
+    the Held–Karp tail is still the shortest path through the remainder.
+    """
+    if not points:
+        return []
+    nearest = min(points, key=lambda c: (dist(start, points[c]), c))
+    rest = {c: p for c, p in points.items() if c != nearest}
+    if not rest:
+        return [nearest]
+    return [nearest] + open_path_channel_order(points[nearest], rest)
+
+
+def no_skip_open_path_channel_order(
+    start: Point,
+    points: dict[int, Point],
+    local_m: float = 650.0,
+) -> list[int]:
+    """Visit every nearby city before any far city; TSP inside each group.
+
+    Local = within ``local_m`` of ``start``.  This is a two-level open
+    Hamiltonian path: nearest-pinned TSP on the local cluster, then
+    nearest-pinned TSP on the far cluster from the last local city.
+    """
+    if not points:
+        return []
+    local = {c: p for c, p in points.items() if dist(start, p) <= local_m + 1e-9}
+    far = {c: p for c, p in points.items() if c not in local}
+    if not local:
+        return nearest_open_path_channel_order(start, points)
+    order = nearest_open_path_channel_order(start, local)
+    if not far:
+        return order
+    last = local[order[-1]]
+    return order + nearest_open_path_channel_order(last, far)
+
+
 def open_path_order(start: Point, pts: Sequence[Point]) -> list[Point]:
-    """Open Held–Karp path from start through pts (n≤12); NN+2-opt if larger."""
+    """Open Held–Karp path from start through pts (n≤16); NN+2-opt if larger."""
     pts = list(pts)
     n = len(pts)
     if n <= 1:
         return pts
-    if n > 12:
+    if n > 16:
         return _open_nn_two_opt(start, pts)
     nodes = [start, *pts]
     m = n + 1
@@ -540,3 +734,207 @@ def regular_ring_search_time(
         "dwell_s": dwell_s,
         "total_s": travel_s + dwell_s,
     }
+
+
+def q4_double_ring_path_m(
+    n_inner: int,
+    inner_r: float,
+    n_outer: int,
+    outer_r: float,
+    *,
+    align: str = "radial",
+    inner_phase_rad: float = 0.0,
+    enroute_r: float | None = ENROUTE_R,
+) -> float:
+    """Serial concentric tour: origin → enroute ring → inner ring → outer ring.
+
+    Same-radial layouts jump along a shared ray; stagger pays the chord to the
+    nearest outer vertex. No return to the origin (search then clear).
+    """
+    origin = (0.0, 0.0)
+    inner_phase = inner_phase_rad
+    outer_phase = inner_phase + q4_outer_phase_rad(n_inner, n_outer, align)
+    inner = _regular_polygon(inner_r, n_inner, inner_phase)
+    outer = _regular_polygon(outer_r, n_outer, outer_phase)
+    tour: list[Point] = [origin]
+    if enroute_r is not None and enroute_r > 1e-9:
+        enroute = _regular_polygon(enroute_r, n_inner, inner_phase)
+        tour.extend(enroute)
+    tour.extend(inner)
+    tour.extend(outer)
+    return _path_length(tour[0], tour[1:])
+
+
+def q4_double_ring_search_time(
+    n_inner: int,
+    inner_r: float,
+    n_outer: int,
+    outer_r: float,
+    *,
+    align: str = "radial",
+    inner_phase_rad: float = 0.0,
+    enroute_r: float | None = ENROUTE_R,
+    speed_mps: float = SPEED_MPS,
+    n_radial: int = 6,
+    n_ang: int = 48,
+    n_headings: int = 24,
+    check_cover: bool = True,
+) -> dict[str, float | int | bool | str | None]:
+    """Worst-case detection-tour virtual time for a Q4 double ring.
+
+    Every listen stop except the origin pays a full 20-channel sweep (unknown
+    channels remain). Coverage is the exact listen set, not the extra 8×900
+    points injected by ``q4_listen_set``.
+    """
+    n_enroute = n_inner if enroute_r is not None and enroute_r > 1e-9 else 0
+    n_stops = 1 + n_enroute + n_inner + n_outer
+    path_m = q4_double_ring_path_m(
+        n_inner,
+        inner_r,
+        n_outer,
+        outer_r,
+        align=align,
+        inner_phase_rad=inner_phase_rad,
+        enroute_r=enroute_r,
+    )
+    travel_s = path_m / speed_mps
+    dwell_s = origin_full_sweep_s() + (n_stops - 1) * ring_full_sweep_s()
+    detect_s = n_stops * N_CHANNELS * DETECT_S
+    switch_s = (N_CHANNELS - 1) * SWITCH_S + (n_stops - 1) * N_CHANNELS * SWITCH_S
+    cover = {"omni": None, "directional": None, "ok": True}
+    if check_cover:
+        cover = q4_double_ring_cover_ok(
+            n_inner,
+            inner_r,
+            n_outer,
+            outer_r,
+            align=align,
+            inner_phase_rad=inner_phase_rad,
+            enroute_r=enroute_r,
+            n_radial=n_radial,
+            n_ang=n_ang,
+            n_headings=n_headings,
+        )
+    return {
+        "n_inner": n_inner,
+        "n_outer": n_outer,
+        "inner_r": inner_r,
+        "outer_r": outer_r,
+        "align": align,
+        "enroute_r": enroute_r,
+        "n_enroute": n_enroute,
+        "n_stops": n_stops,
+        "feasible": bool(cover["ok"]),
+        "omni_ok": cover["omni"],
+        "dir_ok": cover["directional"],
+        "path_m": path_m,
+        "travel_s": travel_s,
+        "dwell_s": dwell_s,
+        "detect_s": detect_s,
+        "switch_s": switch_s,
+        "total_s": travel_s + dwell_s,
+    }
+
+
+def q4_min_outer_radius(
+    n_inner: int,
+    inner_r: float,
+    n_outer: int,
+    *,
+    align: str = "radial",
+    enroute_r: float | None = ENROUTE_R,
+    inner_phase_rad: float = 0.0,
+    candidates: Sequence[float] | None = None,
+    n_radial: int = 4,
+    n_ang: int = 24,
+    n_headings: int = 12,
+) -> float | None:
+    """Smallest sampled outer circumradius that omni- and front-covers.
+
+    Feasible outer radii form an interval: too close sits behind outward
+    boundary sources, too far exceeds r_eff=1000 m.  ``r_hi = arena+cover``
+    is therefore not a safe upper oracle.
+    """
+    if candidates is None:
+        candidates = (
+            1865.0,
+            1900.0,
+            1950.0,
+            2000.0,
+            2050.0,
+            2100.0,
+            2150.0,
+            2200.0,
+            2300.0,
+            2400.0,
+            2500.0,
+        )
+    kwargs = dict(
+        n_inner=n_inner,
+        inner_r=inner_r,
+        n_outer=n_outer,
+        align=align,
+        inner_phase_rad=inner_phase_rad,
+        enroute_r=enroute_r,
+        n_radial=n_radial,
+        n_ang=n_ang,
+        n_headings=n_headings,
+    )
+    for outer_r in candidates:
+        if q4_double_ring_cover_ok(outer_r=outer_r, **kwargs)["ok"]:
+            return float(outer_r)
+    return None
+
+
+def q4_enumerate_double_rings(
+    *,
+    inner_ns: Sequence[int] = (6, 7, 8, 9, 10, 12),
+    outer_ns: Sequence[int] = (8, 10, 11, 12, 14, 16),
+    aligns: Sequence[str] = ("radial", "stagger"),
+    enroute_radii: Sequence[float | None] = (None, ENROUTE_R),
+    inner_radii: Sequence[float] | None = None,
+    certify: bool = True,
+) -> list[dict[str, float | int | bool | str | None]]:
+    """Enumerate regular inner/outer n-gons; keep covering layouts, min outer radius."""
+    if inner_radii is None:
+        inner_radii = (1000.0, 1123.0, 1150.0, 1200.0)
+    rows: list[dict[str, float | int | bool | str | None]] = []
+    seen: set[tuple] = set()
+    for n_in in inner_ns:
+        radii = list(inner_radii)
+        interval = regular_ring_rho_interval(n_in)
+        if interval is not None:
+            radii.append(interval[0])
+        for inner_r in sorted(set(round(r, 3) for r in radii)):
+            for n_out in outer_ns:
+                for align in aligns:
+                    for enroute_r in enroute_radii:
+                        key = (n_in, inner_r, n_out, align, enroute_r)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        outer_r = q4_min_outer_radius(
+                            n_in,
+                            inner_r,
+                            n_out,
+                            align=align,
+                            enroute_r=enroute_r,
+                        )
+                        if outer_r is None:
+                            continue
+                        row = q4_double_ring_search_time(
+                            n_in,
+                            inner_r,
+                            n_out,
+                            outer_r,
+                            align=align,
+                            enroute_r=enroute_r,
+                            check_cover=certify,
+                            n_radial=6,
+                            n_ang=48,
+                            n_headings=24,
+                        )
+                        if row["feasible"]:
+                            rows.append(row)
+    rows.sort(key=lambda r: (float(r["total_s"]), int(r["n_stops"]), float(r["path_m"])))
+    return rows

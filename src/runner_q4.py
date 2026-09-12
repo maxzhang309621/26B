@@ -47,6 +47,31 @@ def run_q4_pathopt(
     ).run(do_enter=do_enter)
 
 
+def run_q4_hexbatch(
+    bot: RobotClient,
+    target_n: int | None = None,
+    *,
+    do_enter: bool = True,
+    q4_omni_n: int | None = None,
+    q4_dir_n: int | None = None,
+) -> dict:
+    """Experimental Q4: shortest dense-feasible detection rings, then RH batch clear.
+
+    Inner regular heptagon at the omni ρ_min, outer 12×1865 m, same radial.
+    Does not change ``run_q4()`` (v_nofar).
+    """
+    return HuntPolicy(
+        bot,
+        directional=True,
+        q4_dynamic_outer=False,
+        q4_profile="dynamic_pure",
+        q4_path_profile="hexbatch",
+        target_n=target_n,
+        q4_enter_omni=q4_omni_n,
+        q4_enter_dir=q4_dir_n,
+    ).run(do_enter=do_enter)
+
+
 def run_q4_v2(
     bot: RobotClient,
     target_n: int | None = None,

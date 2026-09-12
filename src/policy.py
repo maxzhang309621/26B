@@ -28,8 +28,11 @@ from geometry import (
     unit,
 )
 from candidate import (
+    front_compatible,
+    from_body,
     in_candidate_region,
     next_stations,
+    ray_exit_t,
     recommend_second,
     recommend_second_options,
     recommend_second_sides_compact,
@@ -37,14 +40,18 @@ from candidate import (
 from belief import ChannelBook, Detection, R_RULE_OUT
 from coverage import (
     ENROUTE_R,
+    Q4_OPT_OUTER_N,
+    Q4_OPT_OUTER_R,
     Q4_OUTER_FULL_N,
     Q4_OUTER_FULL_R,
     covering_phases,
     directional_waypoints,
     omni_waypoints,
     q3_waypoints,
+    q4_opt_search_waypoints,
     open_path_channel_order,
     open_path_cost,
+    no_skip_open_path_channel_order,
     pick_q4_outer_ring,
     sector_fused_order,
 )
@@ -74,6 +81,9 @@ Q3_COVER_ENROUTE_EXTRA_M = 280.0
 # and no later hexagon vertex already provides that look.
 Q3_COVER_EDGE_SECOND = True
 Q3_COVER_EDGE_TS = (0.25, 0.4, 0.5, 0.6, 0.75)
+# Q4 hexbatch: prefer local clears before far TSP legs; proxy second-look radius.
+Q4_CLEAR_LOCAL_M = 650.0
+Q4_CLEAR_PROXY_RHO = 380.0
 OPTICAL_GRID_M = 25.0
 # Grid is only for an already-small SEC. A large cone must take another bearing.
 OPTICAL_GRID_MAX_CELLS = 8
@@ -302,19 +312,26 @@ class HuntPolicy:
         self.q4_enter_omni = q4_enter_omni
         self.q4_enter_dir = q4_enter_dir
         self.q4_outer_mode = q4_outer_mode
-        self.q4_path_profile = q4_path_profile if q4_path_profile in ("v_nofar", "pathopt") else "v_nofar"
+        self.q4_path_profile = (
+            q4_path_profile if q4_path_profile in ("v_nofar", "pathopt", "hexbatch") else "v_nofar"
+        )
         self.q4_insert_delta_max_m = float(q4_insert_delta_max_m)
         self.q3_path_profile = q3_path_profile if q3_path_profile in ("defer", "batch") else "defer"
         self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
         self._q3_batch = bool(not directional and self.q3_path_profile == "batch")
+        self._q4_hexbatch = bool(directional and self.q4_path_profile == "hexbatch")
         self._cover_phase = False
         self._pathopt_rejoin: Point | None = None
-        self.q4_outer_r = Q4_OUTER_FULL_R
-        self.q4_outer_n = Q4_OUTER_FULL_N
+        self.q4_outer_r = Q4_OPT_OUTER_R if self._q4_hexbatch else Q4_OUTER_FULL_R
+        self.q4_outer_n = Q4_OPT_OUTER_N if self._q4_hexbatch else Q4_OUTER_FULL_N
         self.waypoints = (
-            directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
-            if directional
-            else (q3_waypoints() if self._q3_batch else omni_waypoints())
+            q4_opt_search_waypoints()
+            if self._q4_hexbatch
+            else (
+                directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+                if directional
+                else (q3_waypoints() if self._q3_batch else omni_waypoints())
+            )
         )
         self.stuck: set[int] = set()
         self.creep_calls = 0
@@ -349,6 +366,7 @@ class HuntPolicy:
         self.q3_rh_replans = 0
         self.q3_rh_switches = 0
         self.q3_cover_enroute_clears = 0
+        self._q4_clear_queue: list[int] | None = None
         self._set_target_n(target_n)
 
     def _set_target_n(self, n: int | None) -> None:
@@ -377,6 +395,12 @@ class HuntPolicy:
             jammer_count=body.get("jammer_count"),
             pure=self.q4_profile == "dynamic_pure",
         )
+        if self._q4_hexbatch:
+            self.waypoints = q4_opt_search_waypoints(
+                outer_r=self.q4_outer_r,
+                outer_n=self.q4_outer_n,
+            )
+            return
         self.waypoints = directional_waypoints(
             outer_r=self.q4_outer_r,
             outer_n=self.q4_outer_n,
@@ -533,6 +557,8 @@ class HuntPolicy:
             if self.directional:
                 if self._pathopt:
                     self._run_stagger_search_cover()
+                elif self._q4_hexbatch:
+                    self._run_q4_hexagon_search_cover()
                 else:
                     self._run_directional_cover()
             else:
@@ -542,8 +568,18 @@ class HuntPolicy:
                     self._run_omni_q3_cover()
         if not self._guard_tripped() and self.book.pending():
             self.stuck.clear()
-            if self._q3_batch:
+            if self._q3_batch or self._q4_hexbatch:
                 self._batch_clear_by_path()
+                if self._q4_hexbatch:
+                    leftover = set(self.book.pending())
+                    self.stuck.clear()
+                    for ch in leftover:
+                        self._clear_miss_n[ch] = 0
+                    self._tried_clear = {key for key in self._tried_clear if key[0] not in leftover}
+                    for ch in list(self.book.pending()):
+                        if self._guard_tripped():
+                            break
+                        self._home_and_clear(ch)
             else:
                 for ch in list(self.book.pending()):
                     if self._guard_tripped():
@@ -559,6 +595,12 @@ class HuntPolicy:
         avg = vt / n_clear if n_clear else float("inf")
         extra = action_stats(self.bot.log)
         move_decomposition = self._move_decomposition()
+        q4_inner_n = q4_inner_r = None
+        if self.directional:
+            _origin, inner_wps, _outer = covering_phases(self.waypoints)
+            q4_inner_n = len(inner_wps)
+            if inner_wps:
+                q4_inner_r = dist(inner_wps[0], (0.0, 0.0))
         if self._deadline_guard:
             termination_reason = "deadline_guard"
         elif self._action_failure:
@@ -606,12 +648,17 @@ class HuntPolicy:
                 if self.directional or len(self.waypoints) < 2
                 else dist(self.waypoints[1], (0.0, 0.0))
             ),
+            "q4_inner_n": q4_inner_n,
+            "q4_inner_r": q4_inner_r,
             "q3_rh_steps": self.q3_rh_steps if self._q3_batch else 0,
             "q3_rh_replans": self.q3_rh_replans if self._q3_batch else 0,
             "q3_rh_switches": self.q3_rh_switches if self._q3_batch else 0,
             "q3_cover_enroute_clears": (
                 self.q3_cover_enroute_clears if self._q3_batch else 0
             ),
+            "q4_rh_steps": self.q3_rh_steps if self._q4_hexbatch else 0,
+            "q4_rh_replans": self.q3_rh_replans if self._q4_hexbatch else 0,
+            "q4_rh_switches": self.q3_rh_switches if self._q4_hexbatch else 0,
             "pending_at_exit": pending_at_exit,
             "exit_accepted": exit_accepted,
             "termination_reason": termination_reason,
@@ -667,6 +714,48 @@ class HuntPolicy:
         self._cover_phase = False
         self._inner_done = True
         self._pathopt_rejoin = None
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _run_q4_hexagon_search_cover(self) -> None:
+        """Q4 hexbatch: opt inner/outer rings first; clear only near-field hits."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        self._cover_phase = True
+        self._inner_done = False
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        for wp in inner:
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            self._listen_enroute(wp)
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            unknown = self.book.unknown_channels()
+            channels = self._channels_for(wp, unknown)
+            if not channels:
+                continue
+            self._scan_point(wp, channels)
+            self._cover_listens.append(wp)
+        self._inner_done = True
+        pending_outer = list(outer)
+        while (
+            pending_outer
+            and not self._done()
+            and not self._search_complete()
+            and not self._guard_tripped()
+        ):
+            unknown = self.book.unknown_channels()
+            if not unknown:
+                break
+            wp = min(pending_outer, key=lambda p: dist(self.bot.position, p))
+            pending_outer = [p for p in pending_outer if dist(p, wp) > 1e-6]
+            # Visit every certified outer vertex. Same-ring disks at 1865 m overlap
+            # inside r_eff, but front-lobe cover does not, so do not skip as redundant.
+            channels = self._channels_for(wp, unknown) or list(unknown)
+            self._scan_point(wp, channels)
+            self._cover_listens.append(wp)
+        self._cover_phase = False
+        self._inner_done = True
         if not self._guard_tripped() and not self._done():
             self._route_completed = True
 
@@ -828,6 +917,9 @@ class HuntPolicy:
 
     def _batch_clear_by_path(self) -> None:
         """Receding-horizon open TSP: one move, then replan from the new pose."""
+        if self._q4_hexbatch:
+            self._batch_clear_locked_tsp()
+            return
         sticky: int | None = None
         idle = 0
         for _ in range(Q3_RH_MAX_ITERS):
@@ -877,6 +969,50 @@ class HuntPolicy:
             if idle > max(3, len(ready)):
                 break
 
+    def _batch_clear_locked_tsp(self) -> None:
+        """Clear along a locked no-skip open TSP of estimated source positions."""
+        self._q4_clear_queue = None
+        idle = 0
+        for _ in range(Q3_RH_MAX_ITERS):
+            if not self.book.pending() or self._done() or self._guard_tripped():
+                break
+            pts = self._rh_ready_points()
+            if not pts:
+                break
+            self.q3_rh_replans += 1
+            pos = self.bot.position
+            queue = [c for c in (self._q4_clear_queue or []) if c in pts]
+            local_left = any(dist(pos, pts[c]) <= Q4_CLEAR_LOCAL_M for c in pts)
+            planned_far = bool(queue) and dist(pos, pts[queue[0]]) > Q4_CLEAR_LOCAL_M + 1e-9
+            if not queue or (local_left and planned_far):
+                queue = no_skip_open_path_channel_order(pos, pts, local_m=Q4_CLEAR_LOCAL_M)
+            nearest = min(pts, key=lambda c: (dist(pos, pts[c]), c))
+            if dist(pos, pts[nearest]) + 80.0 < dist(pos, pts[queue[0]]):
+                queue = no_skip_open_path_channel_order(pos, pts, local_m=Q4_CLEAR_LOCAL_M)
+            ch = queue[0]
+            self._q4_clear_queue = queue
+            before_pos = self.bot.position
+            before_n = len(self.book.detections.get(ch, []))
+            before_cleared = ch in self.book.cleared
+            self.localization_services += 1
+            if before_n == 1:
+                self.dedicated_localizations += 1
+            self._rh_service_step(ch)
+            self.q3_rh_steps += 1
+            self._q4_clear_queue = [c for c in queue if c != ch]
+            if ch in self.book.cleared:
+                idle = 0
+                continue
+            moved = dist(self.bot.position, before_pos) > 1.0
+            new_obs = len(self.book.detections.get(ch, [])) > before_n
+            if moved or new_obs or (ch in self.book.cleared) != before_cleared:
+                idle = 0
+            else:
+                idle += 1
+            self.stuck.add(ch)
+            if idle > max(3, len(pts)):
+                break
+
     def _rh_ready_points(self) -> dict[int, Point]:
         return {
             ch: self._estimated_service_point(ch)
@@ -890,7 +1026,10 @@ class HuntPolicy:
         if not pts:
             return None
         start = self.bot.position
-        order = open_path_channel_order(start, pts)
+        if self._q4_hexbatch:
+            order = no_skip_open_path_channel_order(start, pts, local_m=Q4_CLEAR_LOCAL_M)
+        else:
+            order = open_path_channel_order(start, pts)
         if not order:
             return None
         ch = order[0]
@@ -921,6 +1060,10 @@ class HuntPolicy:
                 in_range.append((gap, ch))
         if in_range:
             return min(in_range)[1]
+        # Q3 uses the farthest in-region 1-obs source for a wide baseline.
+        # On Q4 directional that yanks the dog across the arena before TSP.
+        if self._q4_hexbatch:
+            return None
         seconds: list[tuple[float, int]] = []
         for ch in ready:
             obs = self.book.detections.get(ch, [])
@@ -947,6 +1090,9 @@ class HuntPolicy:
             return
         obs = self.book.detections.get(ch, [])
         if not obs:
+            return
+        if self._q4_hexbatch:
+            self._localize_and_clear(ch)
             return
         pos = self.bot.position
         dest = self._estimated_service_point(ch)
@@ -1141,7 +1287,8 @@ class HuntPolicy:
             return
         self._scan_point(mid, chs)
         self._cover_listens.append(mid)
-        self._drain_pending()
+        if not (self._q4_hexbatch and self._cover_phase):
+            self._drain_pending()
 
     def _record_direction(self, ch: int, xy: Point, svd: float) -> None:
         if ch not in self.book.detections:
@@ -1244,7 +1391,7 @@ class HuntPolicy:
             ]
             if not pending or len(self.book.cleared) >= self._target_n:
                 break
-            if self._q3_batch and self._cover_phase:
+            if (self._q3_batch or self._q4_hexbatch) and self._cover_phase:
                 break
             if not self.directional:
                 ready: list[int] = []
@@ -1295,6 +1442,23 @@ class HuntPolicy:
             if ch not in self.stuck and self._eligible_route_probe(ch, waypoint)
         ]
 
+    @staticmethod
+    def _clip_arena_pt(p: Point) -> Point:
+        radius = dist(p, (0.0, 0.0))
+        if radius > Q3_ARENA_R:
+            return scale(p, (Q3_ARENA_R - 1e-6) / radius)
+        return p
+
+    def _along_bearing_proxy(self, s1: Point, theta_deg: float, rho: float | None = None) -> Point:
+        """Guess the source location on the first bearing (not a lateral second station)."""
+        if rho is None:
+            rho = Q4_CLEAR_PROXY_RHO if self._q4_hexbatch else 700.0
+        t_exit = ray_exit_t(s1, theta_deg, Q3_ARENA_R)
+        if t_exit > 1.0:
+            rho = min(rho, 0.55 * t_exit)
+        rho = max(120.0, rho)
+        return self._clip_arena_pt(from_body(s1, theta_deg, rho, 0.0))
+
     def _estimated_service_point(self, ch: int) -> Point:
         obs = self.book.detections.get(ch, [])
         if not obs:
@@ -1323,11 +1487,13 @@ class HuntPolicy:
                 if radius > Q3_ARENA_R:
                     return scale(center, (Q3_ARENA_R - 1e-6) / radius)
                 return center
+        if self._q4_hexbatch:
+            return self._along_bearing_proxy(obs[0].xy, obs[0].svd_deg)
         stations = next_stations(
             obs[0].xy,
             obs[0].svd_deg,
             now=self.bot.position,
-            directional=False,
+            directional=self.directional,
             silence=self.book.silent_at.get(ch),
         )
         if stations:
@@ -1532,14 +1698,14 @@ class HuntPolicy:
                     )
                 )
             else:
-                # Q4: keep prior order (bearing then quality).
-                if self._try_bearing_clears(ch, obs):
-                    return
                 quality = locate_quality(
                     stations,
                     bearings,
                     silence=self.book.silent_at.get(ch),
                 )
+                # Hexbatch: collinear along-ray looks must not fire far false intersections.
+                if not (self._q4_hexbatch and quality.near_collinear) and self._try_bearing_clears(ch, obs):
+                    return
                 if quality.can_clear_20 and quality.sec_center is not None:
                     if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
                         return
@@ -1677,6 +1843,9 @@ class HuntPolicy:
         return False
 
     def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
+        if self._q4_hexbatch and self.directional:
+            self._take_second_fix_hexbatch(ch, s1, th)
+            return
         if not self.directional:
             # Q3: Q2 next_stations primary, then legal recommend_second_options.
             ordered = next_stations(
@@ -1717,6 +1886,47 @@ class HuntPolicy:
             if not self.directional:
                 return
 
+    def _take_second_fix_hexbatch(self, ch: int, s1: Point, th: float) -> None:
+        """One nearest front-lobe second station, then along-ray; never both sides."""
+        now = self.bot.position
+        silence = self.book.silent_at.get(ch)
+        ordered: list[Point] = []
+        compact = list(recommend_second_sides_compact(s1, th))
+        compact.sort(key=lambda p: dist(p, now))
+        for p in compact:
+            if dist(p, s1) <= 5.0:
+                continue
+            if not front_compatible(s1, th, p):
+                continue
+            if silence and any(dist(p, q) < 35.0 for q in silence):
+                continue
+            ordered.append(p)
+            break
+        if not ordered:
+            extra = next_stations(
+                s1,
+                th,
+                now=now,
+                directional=True,
+                silence=silence,
+            )
+            for p in extra:
+                if dist(p, s1) > 5.0:
+                    ordered.append(p)
+                    break
+        along = self._along_bearing_proxy(s1, th, rho=450.0)
+        if dist(along, s1) > 80.0 and all(dist(along, q) > 40.0 for q in ordered):
+            ordered.append(along)
+        for s2 in ordered:
+            if ch in self.book.cleared:
+                return
+            before = len(self.book.detections.get(ch, []))
+            heard = self._measure_obs(ch, s2, self.book.detections.get(ch, []))
+            if ch in self.book.cleared or heard or len(self.book.detections.get(ch, [])) > before:
+                return
+            if dist(s2, s1) <= 40.0 and self._try_clear(s2, ch, source="second_station"):
+                return
+
     def _measure_obs(self, ch: int, xy: Point, obs: list) -> bool:
         body = self._measure_action(xy, ch)
         if not _accepted(body):
@@ -1728,8 +1938,10 @@ class HuntPolicy:
             self._record_direction(ch, xy, float(body["svd_deg"]))
             return True
         self.book.record_silence(ch, xy)
-        if obs and self._try_clear(xy, ch, charge=False, behind_lobe=True, source="behind_lobe"):
-            return True
+        near_last = bool(obs) and dist(xy, obs[-1].xy) <= 40.0
+        if obs and (near_last or not self._q4_hexbatch):
+            if self._try_clear(xy, ch, charge=False, behind_lobe=True, source="behind_lobe"):
+                return True
         return False
 
     def _creep_clear(self, ch: int, start: Point, th: float) -> bool:
@@ -1764,7 +1976,7 @@ class HuntPolicy:
                 heading = float(body["svd_deg"])
                 p = nxt
                 self._record_direction(ch, nxt, heading)
-                if self._try_bearing_clears(ch, self.book.detections.get(ch, [])):
+                if not self._q4_hexbatch and self._try_bearing_clears(ch, self.book.detections.get(ch, [])):
                     return True
                 step = max(28.0, step * 0.65)
                 continue

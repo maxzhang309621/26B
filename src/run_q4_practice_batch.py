@@ -1,6 +1,7 @@
 """Q4 PRACTICE-only batch. Never starts or clicks 正式测试. Never runs 问题3.
 
-Hunt path for this script is double-ring ``v_nofar`` (``run_q4``), origin+8×995+12×1865.
+Hunt path: ``run_q4_hexbatch`` (7×ρ_min inner + 12×1865 outer, search then
+dynamic clear). Submission baseline ``run_q4()`` stays ``v_nofar``.
 
 Hard rules:
 - No coordinate / image / SendKeys clicks (正式 sits next to 演练).
@@ -235,9 +236,9 @@ def _one_round(
         omni_n = case_meta.get("omnidirectional_jammer_count", omni_n)
         dir_n = case_meta.get("directional_jammer_count", dir_n)
     if isinstance(omni_n, int) and isinstance(dir_n, int):
-        print(f"演练窗组成：全向 {omni_n} + 定向 {dir_n}（已记录；当前策略=证书航路 8×995+12×1865 + 光学兜底）")
+        print(f"演练窗组成：全向 {omni_n} + 定向 {dir_n}（策略=hexbatch 先搜后清）")
     else:
-        print("演练窗未读到全向/定向组成（当前策略=证书航路 8×995+12×1865 + 光学兜底）")
+        print("演练窗未读到全向/定向组成（策略=hexbatch 先搜后清）")
     stats = run_hunt(
         str(PROBLEM),
         bot,

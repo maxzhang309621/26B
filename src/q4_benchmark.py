@@ -69,8 +69,14 @@ def _run_case(
         "creep_calls": stats.get("creep_calls"),
         "q4_outer_r": stats.get("q4_outer_r"),
         "q4_outer_n": stats.get("q4_outer_n"),
+        "q4_inner_n": stats.get("q4_inner_n"),
+        "q4_inner_r": stats.get("q4_inner_r"),
+        "q4_path_profile": stats.get("q4_path_profile"),
+        "q4_rh_replans": stats.get("q4_rh_replans"),
         "q4_outer_fill_visits": stats.get("q4_outer_fill_visits"),
         "channels": stats["channels"],
+        "pending_at_exit": stats.get("pending_at_exit"),
+        "completed": stats.get("completed"),
     }
 
 
@@ -99,8 +105,13 @@ def main() -> None:
         help="Run dynamic_pure vs v2 on same seeds",
     )
     p.add_argument(
+        "--compare-hexbatch",
+        action="store_true",
+        help="Run v_nofar vs hexbatch (7×997+12×1865, search then RH clear) on same seeds",
+    )
+    p.add_argument(
         "--profile",
-        choices=("v2", "dynamic_pure", "pathopt"),
+        choices=("v2", "dynamic_pure", "pathopt", "hexbatch"),
         default="v2",
         help="Q4 profile (default: v2)",
     )
@@ -137,6 +148,69 @@ def main() -> None:
         )
 
     dynamic = not args.fixed_outer
+
+    if args.compare_hexbatch:
+        seeds = list(range(args.seeds))
+        base_rows = [
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                dynamic_outer=False,
+                q4_profile="dynamic_pure",
+                q4_path_profile="v_nofar",
+            )
+            for i in seeds
+        ]
+        hex_rows = [
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                dynamic_outer=False,
+                q4_profile="dynamic_pure",
+                q4_path_profile="hexbatch",
+            )
+            for i in seeds
+        ]
+        base = _summarize("q4_v_nofar", base_rows)
+        hexb = _summarize("q4_hexbatch", hex_rows)
+        compare = {
+            "seeds": args.seeds,
+            "scheme": "inner heptagon 7×ρ_min + outer 12×1865 radial; search then RH-OTSP clear",
+            "official_simulator": False,
+            "v_nofar": {
+                k: base[k] for k in ("tag", "miss", "mean_vt", "median_vt", "p90_vt", "mean_travel_s")
+            },
+            "hexbatch": {
+                k: hexb[k] for k in ("tag", "miss", "mean_vt", "median_vt", "p90_vt", "mean_travel_s")
+            },
+            "delta_mean_vt": hexb["mean_vt"] - base["mean_vt"],
+            "delta_mean_travel_s": (
+                None
+                if hexb["mean_travel_s"] is None or base["mean_travel_s"] is None
+                else hexb["mean_travel_s"] - base["mean_travel_s"]
+            ),
+            "miss_delta": hexb["miss"] - base["miss"],
+            "hexbatch_miss_cases": hexb["miss_cases"],
+            "v_nofar_miss_cases": base["miss_cases"],
+        }
+        out = (
+            args.out
+            if args.out.name != "q4-mock-summary.json"
+            else args.out.with_name("q4-hexbatch-vs-vnofar.json")
+        )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(compare, ensure_ascii=False, indent=2), encoding="utf-8")
+        _print_summary(base)
+        _print_summary(hexb)
+        print(f"delta mean_vt (hexbatch - v_nofar) = {compare['delta_mean_vt']:+.1f}s")
+        if compare["delta_mean_travel_s"] is not None:
+            print(
+                f"delta mean_travel (hexbatch - v_nofar) = {compare['delta_mean_travel_s']:+.1f}s"
+            )
+        print("wrote", out)
+        if hexb["miss"]:
+            sys.exit(1)
+        return
 
     if args.compare_profiles:
         seeds = list(range(args.seeds))
@@ -196,7 +270,12 @@ def main() -> None:
             sys.exit(1)
         return
 
-    path_profile = "pathopt" if args.profile == "pathopt" else "v_nofar"
+    if args.profile == "pathopt":
+        path_profile = "pathopt"
+    elif args.profile == "hexbatch":
+        path_profile = "hexbatch"
+    else:
+        path_profile = "v_nofar"
     tag = (
         f"q4_{args.profile}"
         if dynamic
@@ -205,13 +284,16 @@ def main() -> None:
     if args.profile == "pathopt":
         tag = "q4_pathopt"
         dynamic = False
+    elif args.profile == "hexbatch":
+        tag = "q4_hexbatch"
+        dynamic = False
     rows = [
         _run_case(
             f"seed-{i}",
             _mix_sources(i),
             q4_outer_mode=args.outer_mode,
             dynamic_outer=dynamic,
-            q4_profile="dynamic_pure" if args.profile == "pathopt" else args.profile,
+            q4_profile="dynamic_pure" if args.profile in ("pathopt", "hexbatch") else args.profile,
             q4_path_profile=path_profile,
         )
         for i in range(args.seeds)
