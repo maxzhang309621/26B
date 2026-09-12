@@ -80,6 +80,8 @@ Q3_RH_MAX_ITERS = 480
 # During cover: clear SEC-ready sources whose extra path vs the next listen is small.
 # extra = d(now,C)+d(C,next)-d(now,next); ~140 m off-track ≈ 280 m extra.
 Q3_COVER_ENROUTE_EXTRA_M = 280.0
+# Q4 hexbatch cover: same extra-path gate; certified 7+12 listens stay fixed.
+Q4_COVER_ENROUTE_EXTRA_M = 280.0
 # On a ring edge: second look only if a legal Q2 station sits on the segment
 # and no later hexagon vertex already provides that look.
 Q3_COVER_EDGE_SECOND = True
@@ -377,6 +379,7 @@ class HuntPolicy:
         self.q3_rh_replans = 0
         self.q3_rh_switches = 0
         self.q3_cover_enroute_clears = 0
+        self.q4_cover_enroute_clears = 0
         self._q4_clear_queue: list[int] | None = None
         self._use_dir_corrector = (
             bool(use_dir_corrector)
@@ -675,6 +678,9 @@ class HuntPolicy:
                 self.q3_cover_enroute_clears if self._q3_batch else 0
             ),
             "q3_cover_enroute_enabled": self._q3_cover_enroute_enabled,
+            "q4_cover_enroute_clears": (
+                self.q4_cover_enroute_clears if self._q4_hexbatch else 0
+            ),
             "q4_rh_steps": self.q3_rh_steps if self._q4_hexbatch else 0,
             "q4_rh_replans": self.q3_rh_replans if self._q4_hexbatch else 0,
             "q4_rh_switches": self.q3_rh_switches if self._q4_hexbatch else 0,
@@ -784,13 +790,18 @@ class HuntPolicy:
         self._inner_done = False
         self._scan_point(origin, list(range(1, 21)))
         self._cover_listens.append(origin)
-        for wp in inner:
+        nxt_after_origin = inner[0] if inner else (outer[0] if outer else None)
+        self._cover_enroute_clears(nxt_after_origin)
+        for index, wp in enumerate(inner):
             if self._done() or self._guard_tripped():
                 break
             self._listen_enroute(wp)
             if self._done() or self._guard_tripped():
                 break
+            self._cover_enroute_clears(wp)
             self._hexbatch_visit_cover_wp(wp)
+            nxt = inner[index + 1] if index + 1 < len(inner) else (outer[0] if outer else None)
+            self._cover_enroute_clears(nxt)
         self._inner_done = True
         pending_outer = list(outer)
         while pending_outer and not self._done() and not self._guard_tripped():
@@ -799,6 +810,12 @@ class HuntPolicy:
             # Front-lobe cover does not inherit same-ring omni disks; never skip
             # a certified outer vertex that still has discovery or a second look.
             self._hexbatch_visit_cover_wp(wp)
+            nxt = (
+                min(pending_outer, key=lambda p: dist(self.bot.position, p))
+                if pending_outer
+                else None
+            )
+            self._cover_enroute_clears(nxt)
         self._cover_phase = False
         self._inner_done = True
         if not self._guard_tripped() and not self._done():
@@ -926,13 +943,16 @@ class HuntPolicy:
         if len(obs) < 2:
             return []
         used = _diverse_obs(obs, 4)
-        quality = locate_quality(
+        quality = self._channel_locate_quality(
             [d.xy for d in used],
             [d.svd_deg for d in used],
             silence=self.book.silent_at.get(ch),
-            delta_deg=self._aoa_delta_deg(),
         )
         if quality.near_collinear:
+            return []
+        if self._q4_hexbatch:
+            if quality.can_clear_20 and quality.sec_center is not None:
+                return [("sec_center", quality.sec_center)]
             return []
         out: list[tuple[str, Point]] = []
         if quality.sec_center is not None:
@@ -945,13 +965,11 @@ class HuntPolicy:
 
     def _cover_enroute_clears(self, next_wp: Point | None) -> None:
         """Clear a source now iff going there barely lengthens the path to next_wp."""
-        if (
-            not self._q3_cover_enroute_enabled
-            or self._guard_tripped()
-            or self._done()
-        ):
+        q4_on = bool(self._q4_hexbatch and self._cover_phase)
+        q3_on = self._q3_cover_enroute_enabled
+        if (not q4_on and not q3_on) or self._guard_tripped() or self._done():
             return
-        extra_lim = Q3_COVER_ENROUTE_EXTRA_M
+        extra_lim = Q4_COVER_ENROUTE_EXTRA_M if q4_on else Q3_COVER_ENROUTE_EXTRA_M
         tried: set[int] = set()
         while not self._done() and not self._guard_tripped():
             pos = self.bot.position
@@ -975,7 +993,10 @@ class HuntPolicy:
             )
             tried.add(ch)
             if self._try_clear(point, ch, charge=False, source=source):
-                self.q3_cover_enroute_clears += 1
+                if q4_on:
+                    self.q4_cover_enroute_clears += 1
+                else:
+                    self.q3_cover_enroute_clears += 1
 
     def _batch_clear_by_path(self) -> None:
         """Receding-horizon open TSP: one move, then replan from the new pose."""

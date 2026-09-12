@@ -131,5 +131,14 @@ python q1_cli.py
 - 对照（重建 Source）：seed 3/4/0/5 开关 VT 打平，全清，`corrector_fallback=0`
 - 未做：官方演练；正式测试禁止；尚未把 \(R^\ast\) 变成更近的第二站以压时间
 
+## T33–T34 问题 4 覆盖期顺路清除（2026-09-12）
+
+- 文件：`src/policy.py`、`src/runner_q4.py`、`src/tests/test_q4.py`
+- **T33**：hexbatch 覆盖期在原点 / 900 m 途听 / 内顶点 / 外顶点扫描后调用 `_cover_enroute_clears`；Q4 只用修正器 `can_clear_20` 的 SEC；`extra≤280 m`；覆盖期仍不 `_drain_pending`
+- **T34**：廉价 SEC 清 / 过贵跳过 / 非覆盖期跳过；mock 内射线源覆盖期至少清 1 个；远场清改为相对干道折线 >280 m
+- 冒烟：`python -m unittest discover -s tests -q` → **151 passed**
+- mock 对照（相对 v1.6 同种子 VT）：seed3 6696→6227（enroute=1，−470 s）；seed4 5583→5658（enroute=1，+75 s）；seed0/5 打平 enroute=0。四种子均 VT 6632→6534（−98 s），全清，`fallback=0`
+- 未做：官方演练；正式测试禁止；未改 7+12 听点
+
 
 

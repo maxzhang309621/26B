@@ -15,7 +15,7 @@ def run_q4(
     q4_dir_n: int | None = None,
     use_dir_corrector: bool | None = None,
 ) -> dict:
-    """Default Q4: hexbatch cover (7×ρ_min + 12×1865), search-first, then RH clear."""
+    """Default Q4: hexbatch cover (7×ρ_min + 12×1865), search-first with cheap on-route clears, then RH clear."""
     return HuntPolicy(
         bot,
         directional=True,

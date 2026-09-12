@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT))
 
 from belief import ChannelBook
 from coverage import (
+    ENROUTE_R,
+    Q4_OPT_INNER_N,
     Q4_OUTER_FULL_N,
     Q4_OUTER_FULL_R,
     Q4_OUTER_LITE_N,
@@ -31,7 +33,54 @@ from geometry import dist
 from mock_sim import MockSim, Source
 from robot_client import FnTransport, RobotClient
 from runner_q4 import run_q4, run_q4_hexbatch, run_q4_nofar, run_q4_pathopt, run_q4_v2
-from policy import HuntPolicy
+from policy import HuntPolicy, Q4_COVER_ENROUTE_EXTRA_M
+
+
+def _hexbatch_path_listens() -> list:
+    """Certified hexbatch listens plus the 900 m inner-ray stops."""
+    cover = list(q4_hex_listen_set())
+    for k in range(Q4_OPT_INNER_N):
+        a = 2.0 * math.pi * k / Q4_OPT_INNER_N
+        cover.append((ENROUTE_R * math.cos(a), ENROUTE_R * math.sin(a)))
+    return cover
+
+
+def _dist_to_segment(p, a, b) -> float:
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    if length2 < 1e-12:
+        return dist(p, a)
+    t = ((p[0] - ax) * dx + (p[1] - ay) * dy) / length2
+    t = max(0.0, min(1.0, t))
+    return dist(p, (ax + t * dx, ay + t * dy))
+
+
+def _hexbatch_path_segments() -> list[tuple]:
+    origin = (0.0, 0.0)
+    inner = []
+    outer = []
+    enroute = []
+    for k in range(Q4_OPT_INNER_N):
+        a = 2.0 * math.pi * k / Q4_OPT_INNER_N
+        inner.append((q4_opt_inner_r() * math.cos(a), q4_opt_inner_r() * math.sin(a)))
+        enroute.append((ENROUTE_R * math.cos(a), ENROUTE_R * math.sin(a)))
+    _, _, outer_pts = covering_phases(q4_opt_search_waypoints())
+    outer = list(outer_pts)
+    segs = []
+    for mid, wp in zip(enroute, inner):
+        segs.append((origin, mid))
+        segs.append((mid, wp))
+    for i, wp in enumerate(inner):
+        segs.append((wp, inner[(i + 1) % len(inner)]))
+    for i, wp in enumerate(outer):
+        segs.append((wp, outer[(i + 1) % len(outer)]))
+    return segs
+
+
+def _dist_to_hexbatch_path(p) -> float:
+    return min(_dist_to_segment(p, a, b) for a, b in _hexbatch_path_segments())
 
 
 def _mix_sources(n: int, n_dir: int, rng: random.Random) -> list[Source]:
@@ -387,7 +436,7 @@ class TestQ4Mock(unittest.TestCase):
         bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
         stats = run_q4_hexbatch(bot)
         self.assertEqual(stats["cleared"], 14)
-        cover = q4_hex_listen_set()
+        cover = _hexbatch_path_listens()
         last_cover_i = -1
         first_off_clear_i = None
         for i, rec in enumerate(bot.log):
@@ -405,7 +454,12 @@ class TestQ4Mock(unittest.TestCase):
             if path == "/measure" and any(dist(xy, w) < 8.0 for w in cover):
                 last_cover_i = i
             elif path == "/clear" and body.get("clear_result") == "success":
-                if all(dist(xy, w) > 80.0 for w in cover) and first_off_clear_i is None:
+                # Cheap on-path extras may sit on ring edges, away from vertices.
+                # Far dedicated clears must still wait until the last cover listen.
+                if (
+                    _dist_to_hexbatch_path(xy) > Q4_COVER_ENROUTE_EXTRA_M
+                    and first_off_clear_i is None
+                ):
                     first_off_clear_i = i
         if first_off_clear_i is not None and last_cover_i >= 0:
             self.assertLess(last_cover_i, first_off_clear_i)
@@ -416,6 +470,63 @@ class TestQ4Mock(unittest.TestCase):
         policy.book.add_direction(1, (1800.0, 0.0), 180.0)
         policy._drain_pending()
         self.assertIn(1, policy.book.pending())
+
+    def test_hexbatch_cover_enroute_clears_cheap_sec(self):
+        bot = _BotHex()
+        bot.position = (997.0, 0.0)
+        policy = HuntPolicy(bot, directional=True, q4_path_profile="hexbatch")
+        policy._cover_phase = True
+        policy.book.add_direction(1, (0.0, 0.0), 0.0)
+        policy.book.add_direction(1, (997.0, 0.0), 90.0)
+        policy._cover_enroute_points = lambda ch: [("sec_center", (1000.0, 10.0))]
+        next_wp = (
+            997.0 * math.cos(2.0 * math.pi / 7.0),
+            997.0 * math.sin(2.0 * math.pi / 7.0),
+        )
+        policy._cover_enroute_clears(next_wp)
+        self.assertEqual(policy.q4_cover_enroute_clears, 1)
+        self.assertIn(1, policy.book.cleared)
+        self.assertAlmostEqual(bot.position[0], 1000.0, places=6)
+
+    def test_hexbatch_cover_enroute_skips_expensive_detour(self):
+        bot = _BotHex()
+        bot.position = (997.0, 0.0)
+        policy = HuntPolicy(bot, directional=True, q4_path_profile="hexbatch")
+        policy._cover_phase = True
+        policy.book.add_direction(1, (0.0, 0.0), 0.0)
+        policy.book.add_direction(1, (997.0, 0.0), 90.0)
+        policy._cover_enroute_points = lambda ch: [("sec_center", (0.0, 0.0))]
+        next_wp = (
+            997.0 * math.cos(2.0 * math.pi / 7.0),
+            997.0 * math.sin(2.0 * math.pi / 7.0),
+        )
+        policy._cover_enroute_clears(next_wp)
+        self.assertEqual(policy.q4_cover_enroute_clears, 0)
+        self.assertIn(1, policy.book.pending())
+        self.assertEqual(bot.position, (997.0, 0.0))
+
+    def test_hexbatch_cover_enroute_skips_outside_cover_phase(self):
+        bot = _BotHex()
+        bot.position = (997.0, 0.0)
+        policy = HuntPolicy(bot, directional=True, q4_path_profile="hexbatch")
+        policy._cover_phase = False
+        policy.book.add_direction(1, (0.0, 0.0), 0.0)
+        policy.book.add_direction(1, (997.0, 0.0), 90.0)
+        policy._cover_enroute_points = lambda ch: [("sec_center", (1000.0, 10.0))]
+        policy._cover_enroute_clears((800.0, 700.0))
+        self.assertEqual(policy.q4_cover_enroute_clears, 0)
+        self.assertIn(1, policy.book.pending())
+
+    def test_hexbatch_cover_enroute_clears_near_inner_ray(self):
+        src = [
+            Source(channel=6, xy=(700.0, 350.0), r_eff=1500.0, heading_deg=None),
+            Source(channel=11, xy=(-1400.0, 200.0), r_eff=1200.0, heading_deg=180.0),
+        ]
+        sim = MockSim(robot_id="team-test", sources=src)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_hexbatch(bot)
+        self.assertEqual(stats["cleared"], 2, msg=stats)
+        self.assertGreaterEqual(stats["q4_cover_enroute_clears"], 1, msg=stats)
 
     def test_hexbatch_benchmark_seed0_full_clear(self):
         from q4_benchmark import _mix_sources as mix_seed

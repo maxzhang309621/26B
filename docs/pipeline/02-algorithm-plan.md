@@ -481,3 +481,45 @@
 | T30 | `src/dir_corrector.py`：`heading_feasible` / `heard_region` / `locate_quality_dir` / `next_station_dir` | A–E | Ma–Liu 2007；Gholami 最坏 AOA 多面体 |
 | T31 | `HuntPolicy` hexbatch 服务步与第二站接入；开关与 `corrector_fallback` | F,G | `01-architecture.md` v1.6 |
 | T32 | 单测包含率 / 无信号挖扇 / 回退；Q4 mock 若干种子全清 | A–G | `test_dir_corrector.py`；`test_q4.py` |
+
+---
+
+# v1.7 覆盖期顺路清除
+
+## 步骤 H：覆盖期廉价顺路清
+
+- 选定算法：**复用 Q3 extra-path 门禁**。`extra = d(now,C)+d(C,next)-d(now,next) ≤ Q4_COVER_ENROUTE_EXTRA_M=280`。只在 `q4_path_profile=hexbatch` 且 `_cover_phase` 时默认打开。覆盖期仍禁止 `_drain_pending`。
+- 选型理由：听点是覆盖证书，不能删 7+12；修正器已能在干道上给出 `can_clear_20`。Q3 同门禁已验收。
+- 候选：1. extra≤280 当场 `/clear`（首选）2. 覆盖期专程定位（否决，破坏先搜后清）3. 打开 `_drain_pending`（否决，同上）
+- 接口：`HuntPolicy._cover_enroute_clears`；统计 `q4_cover_enroute_clears`
+- 依赖：无新库
+
+## 步骤 I：只用修正器可清的 SEC
+
+- 选定算法：`_cover_enroute_points` 走 `_channel_locate_quality`；Q4 仅当 `can_clear_20` 且有 SEC 圆心时返回；近共线返回空。不扫 optical grid、不 creep。
+- 选型理由：覆盖期只做「已经能清」的廉价动作，避免把未收紧的交会区当清除点。
+- 候选：顺路也打 bearing 交点（Q3 有，Q4 覆盖期不用，降低 miss）
+- 接口：与现有 `_try_clear(..., charge=False)` 相同；Q4 覆盖期不 defer
+- 依赖：v1.6 `dir_corrector`
+
+## 步骤 J：回归口径
+
+- 选定算法：远场专程清 = 到覆盖折线（原点–途听–内七边–外十二边）距离 > 280 m 的成功 `/clear`，必须发生在最后一次覆盖听点 `/measure` 之后。
+- 选型理由：环边中点到顶点可超过 80 m，但仍在干道上。
+- 接口：`tests.test_q4.TestQ4Mock.test_hexbatch_searches_before_offpath_clear`
+
+## 候选尝试记录（v1.7）
+
+| 步骤 | 候选算法 | 状态 | 失败原因 |
+|------|----------|------|----------|
+| H | extra≤280 顺路清 | 采用 | — |
+| H | 覆盖期 `_drain_pending` | 禁止 | 先搜后清被破坏 |
+| I | 仅 `can_clear_20` SEC | 采用 | — |
+| I | 覆盖期 optical/creep | 禁止 | 离干道专程定位 |
+
+## 任务分配（v1.7）
+
+| 任务 ID | 实现内容 | 关联步骤 | 参考资料 |
+|---------|----------|----------|----------|
+| T33 | hexbatch 覆盖循环接入 `_cover_enroute_clears`；Q4 点集过滤；计数器 | H,I | Q3 `_cover_enroute_clears`；v1.6 `_channel_locate_quality` |
+| T34 | 廉价/过贵/非覆盖期单测；mock 全清与折线口径；Q3 默认仍关 | J | `test_q4.py`；`test_q3.py` |
