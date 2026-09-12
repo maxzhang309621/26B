@@ -282,6 +282,7 @@ class HuntPolicy:
         exit_reserve_s: float = DEFAULT_EXIT_RESERVE_S,
         monotonic_clock: Callable[[], float] | None = None,
         enable_step8_clear_ready_insertion: bool = False,
+        allow_q3_cover_enroute_clears: bool = False,
         q4_dynamic_outer: bool = False,
         q4_profile: str = "dynamic_pure",
         q4_enter_omni: int | None = None,
@@ -324,6 +325,9 @@ class HuntPolicy:
         self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
         self._q3_batch = bool(not directional and self.q3_path_profile == "batch")
         self._q4_hexbatch = bool(directional and self.q4_path_profile == "hexbatch")
+        self._q3_cover_enroute_enabled = bool(
+            allow_q3_cover_enroute_clears and self._q3_batch
+        )
         self._cover_phase = False
         self._pathopt_rejoin: Point | None = None
         self.q4_outer_r = Q4_OPT_OUTER_R if self._q4_hexbatch else Q4_OUTER_FULL_R
@@ -351,6 +355,7 @@ class HuntPolicy:
         self.localization_services = 0
         self.first_seen_order: dict[int, int] = {}
         self._tried_clear: set[tuple[int, int, int]] = set()
+        self._q3_deferred_cover_clears: dict[int, tuple[Point, str]] = {}
         self._clear_miss_n: dict[int, int] = {}
         self._uncharged_n: dict[int, int] = {}
         self._behind_lobe_free: set[int] = set()
@@ -660,6 +665,7 @@ class HuntPolicy:
             "q3_cover_enroute_clears": (
                 self.q3_cover_enroute_clears if self._q3_batch else 0
             ),
+            "q3_cover_enroute_enabled": self._q3_cover_enroute_enabled,
             "q4_rh_steps": self.q3_rh_steps if self._q4_hexbatch else 0,
             "q4_rh_replans": self.q3_rh_replans if self._q4_hexbatch else 0,
             "q4_rh_switches": self.q3_rh_switches if self._q4_hexbatch else 0,
@@ -797,7 +803,7 @@ class HuntPolicy:
         )
 
     def _run_omni_q3_search_cover(self) -> None:
-        """Listen first; fold in SEC-ready clears that sit on the next edge."""
+        """Finish the certified Q3 cover before servicing any located source."""
         self._cover_phase = True
         ring = self.waypoints[1:]
         self._scan_point(self.waypoints[0], list(range(1, 21)))
@@ -832,8 +838,21 @@ class HuntPolicy:
             self._cover_enroute_clears(nxt)
             prev = wp
         self._cover_phase = False
-        if not self._guard_tripped() and not self._done():
+        if not self._guard_tripped():
             self._route_completed = True
+        self._service_q3_deferred_cover_clears()
+
+    def _service_q3_deferred_cover_clears(self) -> None:
+        """Execute Q3 near-point clears only after the full cover tour finishes."""
+        if not self._q3_batch or self._cover_phase:
+            return
+        queued = list(self._q3_deferred_cover_clears.items())
+        self._q3_deferred_cover_clears.clear()
+        for ch, (point, source) in queued:
+            if self._guard_tripped() or self._done():
+                break
+            if ch not in self.book.cleared:
+                self._try_clear(point, ch, charge=False, source=source)
 
     def _cover_edge_second_looks(
         self, start: Point, dest: Point, future_wps: list[Point]
@@ -914,7 +933,11 @@ class HuntPolicy:
 
     def _cover_enroute_clears(self, next_wp: Point | None) -> None:
         """Clear a source now iff going there barely lengthens the path to next_wp."""
-        if not self._q3_batch or self._guard_tripped() or self._done():
+        if (
+            not self._q3_cover_enroute_enabled
+            or self._guard_tripped()
+            or self._done()
+        ):
             return
         extra_lim = Q3_COVER_ENROUTE_EXTRA_M
         tried: set[int] = set()
@@ -1458,6 +1481,9 @@ class HuntPolicy:
         behind_lobe: bool = False,
         source: str = "unknown",
     ) -> bool:
+        if self._q3_batch and self._cover_phase and not self._q3_cover_enroute_enabled:
+            self._q3_deferred_cover_clears.setdefault(ch, (xy, source))
+            return False
         if charge and self._clear_budget_left(ch) <= 0:
             return False
         if not charge and behind_lobe:

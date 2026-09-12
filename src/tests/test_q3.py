@@ -118,10 +118,36 @@ class TestQ3Mock(unittest.TestCase):
             xy = (pos["x"], pos["y"])
             if any(dist(xy, w) < 8.0 for w in cover):
                 cover_measures += 1
-        # Ring listens still happen; SEC-ready sources on an edge may be
-        # cleared mid-tour when extra path vs the next listen is small.
+        # Strict scan-first keeps every clear out of the cover phase.
         self.assertGreaterEqual(cover_measures, 4)
-        self.assertGreaterEqual(stats.get("q3_cover_enroute_clears", 0), 0)
+        self.assertFalse(stats["q3_cover_enroute_enabled"])
+        self.assertEqual(stats["q3_cover_enroute_clears"], 0)
+
+    def test_cover_enroute_clear_is_disabled_by_default(self):
+        bot = _MoveBot()
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy.book.add_direction(3, (0.0, 0.0), 0.0)
+        policy.book.add_direction(3, (100.0, 100.0), 270.0)
+        policy._cover_enroute_points = lambda ch: [("bearing", (50.0, 0.0))]
+
+        policy._cover_enroute_clears((100.0, 0.0))
+
+        self.assertEqual(bot.position, (0.0, 0.0))
+        self.assertEqual(policy.q3_cover_enroute_clears, 0)
+
+    def test_cover_near_clear_is_deferred_until_cover_finishes(self):
+        bot = _NearClearBot()
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy._cover_phase = True
+
+        policy._scan_point((0.0, 0.0), [3])
+
+        self.assertEqual(bot.clear_calls, 0)
+        self.assertIn(3, policy._q3_deferred_cover_clears)
+        policy._cover_phase = False
+        policy._service_q3_deferred_cover_clears()
+        self.assertEqual(bot.clear_calls, 1)
+        self.assertIn(3, policy.book.cleared)
 
     def test_cover_edge_second_look_stays_on_ring_edge(self):
         wps = q3_waypoints()
@@ -143,6 +169,7 @@ class _MoveBot:
         self.virtual_time_s = 0.0
         self.log = []
         self.measures = []
+        self.clear_calls = 0
 
     def measure(self, x, y, channel):
         self.position = (x, y)
@@ -151,7 +178,20 @@ class _MoveBot:
 
     def clear(self, x, y, channel):
         self.position = (x, y)
+        self.clear_calls += 1
         return {"accepted": True, "clear_result": "miss"}
+
+
+class _NearClearBot(_MoveBot):
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        self.measures.append((channel, (x, y)))
+        return {"accepted": True, "measure_result": "near"}
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        self.clear_calls += 1
+        return {"accepted": True, "clear_result": "success"}
 
 
 class TestRecedingHorizonClear(unittest.TestCase):

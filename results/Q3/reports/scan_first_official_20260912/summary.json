@@ -1,0 +1,72 @@
+{
+  "cohort_definition": "ten latest Q3 practice result records by ended_at_utc",
+  "n_cases": 10,
+  "all_clear_cases": 10,
+  "completed_cases": 10,
+  "total_sources": 139,
+  "mean_T_s": 4229.6946028,
+  "weighted_T_per_N_s": 304.29457574100724,
+  "mean_case_T_per_N_s": 309.32993327780304,
+  "mean_travel_share": 0.8471520851639471,
+  "mean_backbone_scan_s": 1380.0,
+  "mean_localization_s": 456.2594797446154,
+  "mean_clear_detour_s": 1746.9351226240983,
+  "mean_nonmovement_s": 646.5000004312863,
+  "mean_scan_phase_end_s": 1924.0640506,
+  "mean_service_phase_s": 2305.6305522000002,
+  "mean_success_order_gap_m": 453.46359117486963,
+  "mean_local_probe_extra_m": 1287.3271846052412,
+  "pearson_N_vs_T": 0.585887226314291,
+  "pearson_N_vs_T_per_N": -0.8991603273617835,
+  "pearson_clear_miss_vs_T": 0.871933506410857,
+  "low_N_11_13": {
+    "n_cases": 5,
+    "mean_T_s": 4047.6243718,
+    "mean_T_per_N_s": 339.22689891060605,
+    "mean_scan_phase_end_s": 1982.8189986
+  },
+  "high_N_15_16": {
+    "n_cases": 5,
+    "mean_T_s": 4411.7648338,
+    "mean_T_per_N_s": 279.432967645,
+    "mean_scan_phase_end_s": 1865.3091026
+  },
+  "clear_audit_totals": {
+    "bearing": {
+      "attempts": 106.0,
+      "success": 96.0,
+      "miss": 10.0,
+      "travel_s": 13105.555526841892,
+      "miss_travel_s": 1078.9614764604908
+    },
+    "second_station": {
+      "attempts": 16.0,
+      "success": 0.0,
+      "miss": 16.0,
+      "travel_s": 0.0,
+      "miss_travel_s": 0.0
+    },
+    "optical_grid": {
+      "attempts": 72.0,
+      "success": 10.0,
+      "miss": 62.0,
+      "travel_s": 842.6043265279001,
+      "miss_travel_s": 681.943122463099
+    },
+    "sec_center": {
+      "attempts": 33.0,
+      "success": 33.0,
+      "miss": 0.0,
+      "travel_s": 3521.1913728711897,
+      "miss_travel_s": 0.0
+    },
+    "behind_lobe": {
+      "attempts": 6.0,
+      "success": 0.0,
+      "miss": 6.0,
+      "travel_s": 0.0,
+      "miss_travel_s": 0.0
+    }
+  },
+  "posthoc_oracle_warning": "Uses final successful clear positions; diagnostic lower bound only and forbidden as online policy input."
+}
