@@ -40,7 +40,7 @@ description: Writes and revises the 2026 CUMCM Problem B (26B jammer localizatio
 ## 工作流程
 
 1. 确认当前默认策略：读 `src/runner_q3.py`、`src/runner_q4.py` 的 docstring 与默认 `*_path_profile`。主文只写**将要提交的默认入口**。
-2. 活数据：成绩读 `output/baselines.md` 与其指向的 JSON；覆盖几何读 `src/coverage.py`；定位核读 `src/geometry.py`、`src/candidate.py`；图注口径读 `output/figures/QA_figures.md`。
+2. 活数据优先级：`src/runner_*.py`（航路）→ `output/figures/QA_figures.md`（与当前入口对齐的图和成绩）→ `output/baselines.md`。若 `baselines.md` 的 Q4 行仍写 `8×995`，以 runner + QA 图的 **hexbatch `7×997+12×1865`** 为准，不要把两套航路混成「本文结果」。Q3 官方最优批次以 `output/baselines.md` 的 `q3-edge-second-20260912` 与 `output/q3-results/README.md` 为准。
 3. 打开对应 `qN.md`，按其「建立 / 求解 / 结果 / 验证」清单写或改。
 4. 数字必须能回指文件；没有文件就写「待补」并列出路径，禁止编造。
 5. 改完跑本节自检清单。符号、判定、航路与上游章节冲突时，改后文去对齐已锁定的问题一公式，而不是另写一套。
@@ -73,12 +73,12 @@ description: Writes and revises the 2026 CUMCM Problem B (26B jammer localizatio
 - `no_signal` 只收缩可行集，不把频道标成全局不存在。
 - 主方法不是 LS / ML / CRLB / 卡尔曼。那些最多当对照，并写明与 \(\pm 1^\circ\) 闭区间不符。
 - 爬行（creep）只是有界兜底，不是问题三/四的主路径。
-- 实验分支（`run_q3_defer` 的 \(8\times 1200\)、`run_q4_nofar` 的 \(12\times 2100\)、`pathopt` 交错、未采纳的 Step 8 插入）只能写「对照 / 未采用」，不能写进该问「模型求解」主流程。
+- 实验 / 历史分支只能写「对照 / 未采用」：`run_q3_defer` 的 \(8\times 1200\)、听完即清、Step 8 主干边插入、扫完后硬两波 TSP、`run_q4_nofar` 的 \(12\times 2100\)、证书锁 `8\times 995+12\times 1865`、`pathopt` 交错、动态外环。
 
 默认入口（若代码已改，以 runner 为准，并在正文改航路描述）：
 
-- 问题三：`run_q3()` → `q3_path_profile="batch"`，原点 + 正六边形 \(6\times 1150\,\mathrm{m}\)（相位 \(10^\circ\)），先搜后清，再滚动时域开放路批量清除。
-- 问题四：`run_q4()` → `q4_path_profile="hexbatch"`，原点 + 内正七边形（半径 \(=\rho_{\min}\)，约 \(997\,\mathrm{m}\)，用 `coverage.q4_opt_inner_r()` 核实）+ 外正十二边形 \(12\times 1865\,\mathrm{m}\)，先搜后清，再 RH 清除。无额外 900 m 途听环。
+- 问题三最优 / 当前提交：`run_q3()` → `q3_path_profile="batch"`。原点 + 正六边形 \(6\times 1150\,\mathrm{m}\)（相位 \(10^\circ\)），**先搜后清**；环边补二测；≥2 示向后 RH **直奔**服务点；只试**最近 1 个**示向交点；光学网格收紧。官方最优演练：15/15，均 **4007 s / 295 s/源**（`q3-edge-second-20260912`）。顺路清 extra≤280 m 在该 15 局开启；代码开关是 `allow_q3_cover_enroute_clears`，写前核对 `run_q3()` 是否传入。
+- 问题四最优 / 当前提交：`run_q4()` → `q4_path_profile="hexbatch"`。原点 + 内正七边形 \(\rho_{\min}\approx 997\,\mathrm{m}\)（`q4_opt_inner_r()`）+ 外正十二边形 \(12\times 1865\,\mathrm{m}\)，同径向，证书点集**不含** 900 m 环；从原点出发去内顶点时仍可在射线上 900 m 停听。先搜后清，再锁定无跳点开放路批量清（近场 650 m 优先）。官方 hexbatch 演练：10/10，均 **6967 s / 577 s/源**（`output/drill/q4-batch-summary.json`）。**不要**把 `8\times 995` 的 8899 s 写成当前策略。
 
 ## 四段写法（每问都遵守）
 
