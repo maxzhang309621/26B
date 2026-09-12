@@ -374,6 +374,7 @@ class TestQ4Mock(unittest.TestCase):
             MockSim(robot_id="team-test", sources=_mix_sources(10, 4, random.Random(0))).handle
         )))
         self.assertEqual(stats["q4_path_profile"], "hexbatch")
+        self.assertTrue(stats["dir_corrector"])
         self.assertEqual(stats["cleared"], 10)
         self.assertEqual(stats["q4_inner_n"], 7)
         self.assertAlmostEqual(stats["q4_outer_r"], 1865.0, places=6)

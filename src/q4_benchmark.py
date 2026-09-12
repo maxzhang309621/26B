@@ -36,9 +36,9 @@ def _run_case(
     sources: list[Source],
     *,
     q4_outer_mode: str = "nn",
-    dynamic_outer: bool = True,
-    q4_profile: str = "v2",
-    q4_path_profile: str = "v_nofar",
+    dynamic_outer: bool = False,
+    q4_profile: str = "dynamic_pure",
+    q4_path_profile: str = "hexbatch",
 ) -> dict[str, Any]:
     robot_id = f"q4-benchmark-{case_id}-{q4_outer_mode}"
     sim = MockSim(robot_id=robot_id, sources=sources)
@@ -112,8 +112,8 @@ def main() -> None:
     p.add_argument(
         "--profile",
         choices=("v2", "dynamic_pure", "pathopt", "hexbatch"),
-        default="v2",
-        help="Q4 profile (default: v2)",
+        default="hexbatch",
+        help="Q4 profile (default: hexbatch)",
     )
     p.add_argument(
         "--fixed-outer",
@@ -215,10 +215,24 @@ def main() -> None:
     if args.compare_profiles:
         seeds = list(range(args.seeds))
         pure_rows = [
-            _run_case(f"seed-{i}", _mix_sources(i), q4_profile="dynamic_pure") for i in seeds
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                q4_profile="dynamic_pure",
+                q4_path_profile="v_nofar",
+                dynamic_outer=True,
+            )
+            for i in seeds
         ]
         v2_rows = [
-            _run_case(f"seed-{i}", _mix_sources(i), q4_profile="v2") for i in seeds
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                q4_profile="v2",
+                q4_path_profile="v_nofar",
+                dynamic_outer=True,
+            )
+            for i in seeds
         ]
         pure = _summarize("q4_dynamic_pure", pure_rows)
         v2 = _summarize("q4_dynamic_v2", v2_rows)
@@ -242,10 +256,24 @@ def main() -> None:
     if args.compare:
         seeds = list(range(args.seeds))
         fixed_rows = [
-            _run_case(f"seed-{i}", _mix_sources(i), dynamic_outer=False) for i in seeds
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                dynamic_outer=False,
+                q4_path_profile="v_nofar",
+                q4_profile="v2",
+            )
+            for i in seeds
         ]
         dyn_rows = [
-            _run_case(f"seed-{i}", _mix_sources(i), dynamic_outer=True) for i in seeds
+            _run_case(
+                f"seed-{i}",
+                _mix_sources(i),
+                dynamic_outer=True,
+                q4_path_profile="v_nofar",
+                q4_profile="v2",
+            )
+            for i in seeds
         ]
         fixed = _summarize("q4_fixed_12x2100", fixed_rows)
         dyn = _summarize("q4_dynamic_outer", dyn_rows)

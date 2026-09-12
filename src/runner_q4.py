@@ -13,9 +13,9 @@ def run_q4(
     do_enter: bool = True,
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
-    use_dir_corrector: bool | None = None,
+    use_dir_corrector: bool | None = True,
 ) -> dict:
-    """Default Q4: hexbatch cover (7×ρ_min + 12×1865), search-first with cheap on-route clears, then RH clear."""
+    """Default Q4: hexbatch + dir corrector + cover-phase cheap enroute clears."""
     return HuntPolicy(
         bot,
         directional=True,
@@ -36,7 +36,7 @@ def run_q4_hexbatch(
     do_enter: bool = True,
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
-    use_dir_corrector: bool | None = None,
+    use_dir_corrector: bool | None = True,
 ) -> dict:
     """Alias of ``run_q4`` (hexbatch is the default)."""
     return run_q4(

@@ -293,7 +293,7 @@ class HuntPolicy:
         q4_outer_mode: str | None = None,
         q4_path_profile: str = "hexbatch",
         q4_insert_delta_max_m: float = 400.0,
-        q3_path_profile: str = "defer",
+        q3_path_profile: str = "batch",
         use_dir_corrector: bool | None = None,
     ) -> None:
         if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
@@ -325,7 +325,7 @@ class HuntPolicy:
             q4_path_profile if q4_path_profile in ("v_nofar", "pathopt", "hexbatch") else "hexbatch"
         )
         self.q4_insert_delta_max_m = float(q4_insert_delta_max_m)
-        self.q3_path_profile = q3_path_profile if q3_path_profile in ("defer", "batch") else "defer"
+        self.q3_path_profile = q3_path_profile if q3_path_profile in ("defer", "batch") else "batch"
         self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
         self._q3_batch = bool(not directional and self.q3_path_profile == "batch")
         self._q4_hexbatch = bool(directional and self.q4_path_profile == "hexbatch")

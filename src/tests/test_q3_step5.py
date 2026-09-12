@@ -70,7 +70,7 @@ class TestQ3Step5GuardAndTermination(unittest.TestCase):
 
     def test_short_circuit_is_a_completed_coverage_exit(self):
         bot = _FakeBot()
-        policy = HuntPolicy(bot)
+        policy = HuntPolicy(bot, q3_path_profile="defer")
         policy._scan_point = lambda xy, channels: None
         policy._drain_pending = lambda future=None: None
         policy.book.unknown_channels = lambda: []

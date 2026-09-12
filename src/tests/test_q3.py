@@ -94,7 +94,8 @@ class TestQ3Mock(unittest.TestCase):
 
     def test_batch_uses_hexagon_cover(self):
         bot = _MoveBot()
-        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy = HuntPolicy(bot, directional=False)
+        self.assertEqual(policy.q3_path_profile, "batch")
         self.assertEqual(policy.waypoints, q3_waypoints())
         self.assertEqual(len(policy.waypoints), 7)
 
