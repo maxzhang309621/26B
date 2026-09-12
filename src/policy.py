@@ -13,6 +13,7 @@ from typing import Callable
 
 from geometry import (
     Point,
+    Q3_ANGLE_HALF_WIDTH_DEG,
     Q3_ARENA_R,
     add,
     cross,
@@ -20,6 +21,7 @@ from geometry import (
     intersect_cones,
     intersect_feasible_region,
     locate_quality,
+    optical_grid_centers,
     scale,
     smallest_enclosing_circle,
     sub,
@@ -72,6 +74,8 @@ Q3_RH_SWITCH_MARGIN_M = 50.0
 Q3_RH_MAX_ITERS = 480
 Q4_CLEAR_LOCAL_M = 650.0
 Q4_CLEAR_PROXY_RHO = 380.0
+OPTICAL_GRID_M = 25.0
+OPTICAL_GRID_MAX_CELLS = 512
 
 
 def _perp(p: Point) -> Point:
@@ -319,6 +323,9 @@ class HuntPolicy:
         self.creep_calls = 0
         self.creep_steps = 0
         self.creep_attempted: set[int] = set()
+        self.optical_grid_calls = 0
+        self.optical_grid_hits = 0
+        self.optical_grid_cells = 0
         self.route_rechecks = 0
         self.route_recheck_hits = 0
         self.deferred_channels: set[int] = set()
@@ -608,6 +615,9 @@ class HuntPolicy:
             "channels": sorted(self.book.cleared),
             "creep_calls": self.creep_calls,
             "creep_steps": self.creep_steps,
+            "optical_grid_calls": self.optical_grid_calls,
+            "optical_grid_hits": self.optical_grid_hits,
+            "optical_grid_cells": self.optical_grid_cells,
             "route_rechecks": self.route_rechecks,
             "route_recheck_hits": self.route_recheck_hits,
             "deferred_channels": len(self.deferred_channels),
@@ -966,6 +976,7 @@ class HuntPolicy:
             [d.xy for d in used],
             [d.svd_deg for d in used],
             silence=self.book.silent_at.get(ch),
+            delta_deg=self._aoa_delta_deg(),
         )
         if quality.can_clear_20 and quality.sec_center is not None:
             if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
@@ -976,6 +987,9 @@ class HuntPolicy:
             return
         if not quality.near_collinear and self._try_bearing_clears(ch, obs):
             return
+        # Not yet can_clear_20: try 25 m optical grid before more travel/creep.
+        if self._optical_grid_clear(ch):
+            return
         if gap > step + 1e-6:
             target = _lerp(pos, dest, step / gap)
             self._measure_obs(ch, target, obs)
@@ -985,6 +999,8 @@ class HuntPolicy:
         if self._try_clear(dest, ch, source="measure_fallback"):
             return
         last = obs[-1]
+        if self._optical_grid_clear(ch):
+            return
         self._creep_clear(ch, last.xy, last.svd_deg)
 
     def _run_omni_q3_cover(self) -> None:
@@ -1311,6 +1327,7 @@ class HuntPolicy:
                 [d.xy for d in obs],
                 [d.svd_deg for d in obs],
                 silence=self.book.silent_at.get(ch),
+                delta_deg=self._aoa_delta_deg(),
             )
             if quality.sec_center is not None:
                 cen = quality.sec_center
@@ -1321,6 +1338,7 @@ class HuntPolicy:
             region = intersect_feasible_region(
                 [item.xy for item in obs],
                 [item.svd_deg for item in obs],
+                angle_half_width_deg=self._aoa_delta_deg(),
             )
             if not region.empty and region.vertices:
                 center, _ = smallest_enclosing_circle(region.vertices)
@@ -1503,6 +1521,8 @@ class HuntPolicy:
                     return
                 if len(obs) < 2:
                     last = obs[-1]
+                    if not self.directional and self._optical_grid_clear(ch):
+                        return
                     self._creep_clear(ch, last.xy, last.svd_deg)
                     return
             obs = self.book.detections.get(ch, [])
@@ -1515,6 +1535,7 @@ class HuntPolicy:
                     stations,
                     bearings,
                     silence=self.book.silent_at.get(ch),
+                    delta_deg=self._aoa_delta_deg(),
                 )
                 clear_ready = self._step8_clear_ready_point(quality)
                 if clear_ready is not None and self._step8_queue_clear_ready(ch, clear_ready):
@@ -1529,7 +1550,11 @@ class HuntPolicy:
                 if not quality.near_collinear and self._try_bearing_clears(ch, obs):
                     return
                 region = (
-                    quality.region if not quality.region.empty else intersect_cones(stations, bearings)
+                    quality.region
+                    if not quality.region.empty
+                    else intersect_cones(
+                        stations, bearings, delta_deg=self._aoa_delta_deg()
+                    )
                 )
             else:
                 quality = locate_quality(
@@ -1550,6 +1575,8 @@ class HuntPolicy:
                 region = intersect_cones(stations, bearings)
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
+                if not self.directional and self._optical_grid_clear(ch):
+                    return
                 if self._creep_clear(ch, last.xy, last.svd_deg):
                     return
                 continue
@@ -1561,24 +1588,89 @@ class HuntPolicy:
                 along = add(cen, scale(unit(last.svd_deg), 12.0))
                 if self._try_clear(along, ch, charge=False, source="sec_along"):
                     return
+            if not self.directional and self._optical_grid_clear(ch, list(region.vertices)):
+                return
             nxt = cen if dist(cen, self.bot.position) >= 8.0 else _third_point(region.vertices, self.bot.position)
             if self._measure_obs(ch, nxt, obs):
                 continue
             if self._try_clear(nxt, ch, source="measure_fallback"):
                 return
             last = obs[-1]
+            if not self.directional and self._optical_grid_clear(ch, list(region.vertices)):
+                return
             self._creep_clear(ch, last.xy, last.svd_deg)
             return
         obs = self.book.detections.get(ch, [])
         if obs and ch not in self.book.cleared:
             last = obs[-1]
+            if not self.directional and self._optical_grid_clear(ch):
+                return
             if self._creep_clear(ch, last.xy, last.svd_deg):
                 return
             self._fan_clear(ch, last.xy, last.svd_deg)
 
+    def _aoa_delta_deg(self) -> float:
+        """Q3 uses lecture ±1.01°; Q4 keeps legacy ±1.0°."""
+        return Q3_ANGLE_HALF_WIDTH_DEG if not self.directional else 1.0
+
     def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
         for q in _best_fixes(obs):
             if self._try_clear(q, ch, charge=False, source="bearing"):
+                return True
+        return False
+
+    def _channel_feasible_vertices(self, ch: int) -> list[Point]:
+        obs = self.book.detections.get(ch, [])
+        if len(obs) < 2:
+            return []
+        used = _diverse_obs(obs, 6)
+        quality = locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+            delta_deg=self._aoa_delta_deg(),
+        )
+        region = (
+            quality.region
+            if not quality.region.empty
+            else intersect_cones(
+                [d.xy for d in used],
+                [d.svd_deg for d in used],
+                delta_deg=self._aoa_delta_deg(),
+            )
+        )
+        if region.empty or not region.bounded or len(region.vertices) < 2:
+            return []
+        return list(region.vertices)
+
+    def _optical_grid_clear(self, ch: int, verts: list[Point] | None = None) -> bool:
+        """Video-style 25 m optical grid over the AOA feasible polygon (Q3)."""
+        if self.directional or ch in self.book.cleared:
+            return False
+        verts = verts if verts is not None else self._channel_feasible_vertices(ch)
+        if len(verts) < 2:
+            return False
+        centers = optical_grid_centers(
+            verts,
+            cell=OPTICAL_GRID_M,
+            max_cells=OPTICAL_GRID_MAX_CELLS,
+        )
+        if not centers:
+            return False
+        self.optical_grid_calls += 1
+        self.optical_grid_cells += len(centers)
+        silence = self.book.silent_at.get(ch) or []
+        pos = self.bot.position
+        ordered = sorted(
+            centers,
+            key=lambda c: (
+                any(dist(c, s) < 8.0 for s in silence),
+                dist(c, pos),
+            ),
+        )
+        for c in ordered:
+            if self._try_clear(c, ch, charge=False, source="optical_grid"):
+                self.optical_grid_hits += 1
                 return True
         return False
 
