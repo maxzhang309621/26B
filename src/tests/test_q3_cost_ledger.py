@@ -102,7 +102,9 @@ class TestActionStatsDecomposition(unittest.TestCase):
             move["backbone_planned_s"] + move["backbone_rejoin_s"],
             places=6,
         )
-        self.assertGreater(move["localization_s"], 0.0)
+        # Cover-enroute may fold a near-origin source into the backbone, so
+        # dedicated localization travel can be zero.
+        self.assertGreaterEqual(move["localization_s"], 0.0)
         self.assertGreater(move["clear_detour_s"], 0.0)
 
     def test_clear_audit_covers_all_clears(self):

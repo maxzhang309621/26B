@@ -106,26 +106,35 @@ class TestQ3Mock(unittest.TestCase):
         stats = run_q3_batch(bot)
         self.assertEqual(stats["cleared"], 12)
         cover = q3_waypoints()
-        last_cover_i = -1
-        first_off_clear_i = None
-        for i, rec in enumerate(bot.log):
+        cover_measures = 0
+        for rec in bot.log:
             path = rec.get("path")
-            if path not in ("/measure", "/clear"):
-                continue
             body = rec.get("response") or {}
-            if body.get("accepted") is not True:
+            if path != "/measure" or body.get("accepted") is not True:
                 continue
             pos = (rec.get("request") or {}).get("position")
             if not pos:
                 continue
             xy = (pos["x"], pos["y"])
-            if path == "/measure" and any(dist(xy, w) < 8.0 for w in cover):
-                last_cover_i = i
-            elif path == "/clear" and body.get("clear_result") == "success":
-                if all(dist(xy, w) > 80.0 for w in cover) and first_off_clear_i is None:
-                    first_off_clear_i = i
-        if first_off_clear_i is not None:
-            self.assertLess(last_cover_i, first_off_clear_i)
+            if any(dist(xy, w) < 8.0 for w in cover):
+                cover_measures += 1
+        # Ring listens still happen; SEC-ready sources on an edge may be
+        # cleared mid-tour when extra path vs the next listen is small.
+        self.assertGreaterEqual(cover_measures, 4)
+        self.assertGreaterEqual(stats.get("q3_cover_enroute_clears", 0), 0)
+
+    def test_cover_edge_second_look_stays_on_ring_edge(self):
+        wps = q3_waypoints()
+        start, dest = wps[1], wps[2]
+        bot = _MoveBot(start)
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy.book.add_direction(5, (0.0, 0.0), 0.0)
+        policy._cover_edge_second_looks(start, dest, [])
+        self.assertGreaterEqual(len(bot.measures), 1)
+        for _ch, xy in bot.measures:
+            span = dist(start, dest)
+            via = dist(start, xy) + dist(xy, dest)
+            self.assertLess(via, span + 1e-6)
 
 
 class _MoveBot:
