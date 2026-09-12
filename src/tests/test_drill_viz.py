@@ -7,9 +7,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from coverage import q3_waypoints, q4_opt_search_waypoints
 from drill_viz import (
     extract_path,
     load_drill,
+    planned_waypoints,
     reconstruct_sources,
     render_drill_map,
 )
@@ -92,6 +94,27 @@ class TestDrillViz(unittest.TestCase):
         srcs = reconstruct_sources(parse_action_log(log), problem="4")
         self.assertTrue(srcs[0].directional)
         self.assertIsNotNone(srcs[0].heading_deg)
+
+    def test_q3_batch_waypoints_keep_ten_degree_phase(self):
+        wps = planned_waypoints(
+            {"q3_path_profile": "batch", "q3_ring_n": 6, "q3_ring_r": 1150.0},
+            "3",
+        )
+        self.assertEqual(wps, q3_waypoints())
+        self.assertGreater(abs(wps[1][1]), 1.0)
+
+    def test_q4_hexbatch_waypoints_match_opt_search(self):
+        wps = planned_waypoints(
+            {
+                "q4_path_profile": "hexbatch",
+                "q4_inner_n": 7,
+                "q4_inner_r": 997.2013463756452,
+                "q4_outer_n": 12,
+                "q4_outer_r": 1865.0,
+            },
+            "4",
+        )
+        self.assertEqual(wps, q4_opt_search_waypoints())
 
     def test_render_writes_png(self):
         payload = {

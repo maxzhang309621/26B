@@ -21,6 +21,12 @@ from matplotlib import font_manager
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Wedge
 
+from coverage import (
+    directional_waypoints,
+    omni_waypoints,
+    q3_waypoints,
+    q4_opt_search_waypoints,
+)
 from geometry import Point, Q3_ARENA_R, add, dist, scale, unit
 from inversion import invert_channel
 from log_parse import ChannelObs, extract_log, parse_action_log
@@ -227,16 +233,41 @@ def _ring(n: int, radius: float) -> list[Point]:
 
 
 def planned_waypoints(stats: dict[str, Any], problem: str) -> list[Point]:
-    pts: list[Point] = [(0.0, 0.0)]
-    inner_n = stats.get("q4_inner_n") if str(problem) == "4" else stats.get("q3_ring_n")
-    inner_r = stats.get("q4_inner_r") if str(problem) == "4" else stats.get("q3_ring_r")
-    if isinstance(inner_n, int) and isinstance(inner_r, (int, float)) and inner_n > 0:
-        pts.extend(_ring(inner_n, float(inner_r)))
+    """Same listen set the hunt actually used, including Q3's 10° ring phase."""
+    if str(problem) == "3":
+        n = stats.get("q3_ring_n")
+        r = stats.get("q3_ring_r")
+        profile = stats.get("q3_path_profile")
+        if profile == "batch" or n == 6:
+            if isinstance(r, (int, float)) and r > 0:
+                return q3_waypoints(ring_r=float(r))
+            return q3_waypoints()
+        if isinstance(n, int) and isinstance(r, (int, float)) and n > 0:
+            return omni_waypoints(ring_r=float(r), n=n)
+        return omni_waypoints()
+
+    profile = stats.get("q4_path_profile")
+    inner_n = stats.get("q4_inner_n")
+    inner_r = stats.get("q4_inner_r")
     outer_n = stats.get("q4_outer_n")
     outer_r = stats.get("q4_outer_r")
-    if str(problem) == "4" and isinstance(outer_n, int) and isinstance(outer_r, (int, float)):
+    if profile == "hexbatch" or inner_n == 7:
+        kwargs: dict[str, Any] = {}
+        if isinstance(outer_r, (int, float)):
+            kwargs["outer_r"] = float(outer_r)
+        if isinstance(outer_n, int):
+            kwargs["outer_n"] = outer_n
+        return q4_opt_search_waypoints(**kwargs)
+    if profile == "pathopt":
+        return directional_waypoints()
+    pts: list[Point] = [(0.0, 0.0)]
+    if isinstance(inner_n, int) and isinstance(inner_r, (int, float)) and inner_n > 0:
+        pts.extend(_ring(inner_n, float(inner_r)))
+    if isinstance(outer_n, int) and isinstance(outer_r, (int, float)) and outer_n > 0:
         pts.extend(_ring(outer_n, float(outer_r)))
-    return pts
+    if len(pts) > 1:
+        return pts
+    return directional_waypoints()
 
 
 def load_drill(path: Path | str) -> DrillScene:
