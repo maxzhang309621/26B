@@ -364,13 +364,53 @@ def open_path_channel_order(start: Point, points: dict[int, Point]) -> list[int]
     return out
 
 
+def nearest_open_path_channel_order(start: Point, points: dict[int, Point]) -> list[int]:
+    """Pin the first hop to the nearest city, then open TSP the rest.
+
+    Euclidean open TSP may leave a nearby isolated city for last when a far
+    cluster is cheaper overall.  Pinning the nearest hop forbids that skip;
+    the Held–Karp tail is still the shortest path through the remainder.
+    """
+    if not points:
+        return []
+    nearest = min(points, key=lambda c: (dist(start, points[c]), c))
+    rest = {c: p for c, p in points.items() if c != nearest}
+    if not rest:
+        return [nearest]
+    return [nearest] + open_path_channel_order(points[nearest], rest)
+
+
+def no_skip_open_path_channel_order(
+    start: Point,
+    points: dict[int, Point],
+    local_m: float = 650.0,
+) -> list[int]:
+    """Visit every nearby city before any far city; TSP inside each group.
+
+    Local = within ``local_m`` of ``start``.  This is a two-level open
+    Hamiltonian path: nearest-pinned TSP on the local cluster, then
+    nearest-pinned TSP on the far cluster from the last local city.
+    """
+    if not points:
+        return []
+    local = {c: p for c, p in points.items() if dist(start, p) <= local_m + 1e-9}
+    far = {c: p for c, p in points.items() if c not in local}
+    if not local:
+        return nearest_open_path_channel_order(start, points)
+    order = nearest_open_path_channel_order(start, local)
+    if not far:
+        return order
+    last = local[order[-1]]
+    return order + nearest_open_path_channel_order(last, far)
+
+
 def open_path_order(start: Point, pts: Sequence[Point]) -> list[Point]:
-    """Open Held–Karp path from start through pts (n≤12); NN+2-opt if larger."""
+    """Open Held–Karp path from start through pts (n≤16); NN+2-opt if larger."""
     pts = list(pts)
     n = len(pts)
     if n <= 1:
         return pts
-    if n > 12:
+    if n > 16:
         return _open_nn_two_opt(start, pts)
     nodes = [start, *pts]
     m = n + 1

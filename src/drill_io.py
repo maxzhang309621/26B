@@ -109,11 +109,14 @@ def run_hunt(
     q4_omni_n: int | None = None,
     q4_dir_n: int | None = None,
 ) -> dict[str, Any]:
-    """Run the hunt after /enter. Q4 practice uses origin+8×995+12×1865."""
-    if problem == "4":
-        from runner_q4 import run_q4
+    """Run the hunt after /enter. Q4 practice uses hexbatch (search then batch clear).
 
-        return run_q4(
+    Does not change ``run_q4()`` (submission baseline remains ``v_nofar``).
+    """
+    if problem == "4":
+        from runner_q4 import run_q4_hexbatch
+
+        return run_q4_hexbatch(
             bot,
             target_n=target_n,
             do_enter=False,

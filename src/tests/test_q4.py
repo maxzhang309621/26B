@@ -18,6 +18,7 @@ from coverage import (
     directional_waypoints,
     omni_waypoints,
     open_path_order,
+    no_skip_open_path_channel_order,
     pick_q4_outer_ring,
     q4_hex_listen_set,
     q4_listen_set,
@@ -25,6 +26,7 @@ from coverage import (
     q4_opt_search_waypoints,
     sector_fused_order,
 )
+from candidate import recommend_second_sides_compact
 from geometry import dist
 from mock_sim import MockSim, Source
 from robot_client import FnTransport, RobotClient
@@ -330,6 +332,26 @@ class TestQ4Mock(unittest.TestCase):
         self.assertEqual(stats["q4_outer_n"], 12)
         self.assertAlmostEqual(stats["q4_outer_r"], 1865.0, places=6)
 
+    def test_practice_run_hunt_uses_hexbatch(self):
+        from drill_io import run_hunt
+
+        src = [
+            Source(channel=4, xy=(130.0, 40.0), r_eff=1000.0, heading_deg=17.0),
+            Source(channel=9, xy=(1400.0, -200.0), r_eff=1100.0, heading_deg=None),
+        ]
+        sim = MockSim(robot_id="team-test", sources=src)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        enter = bot.enter()
+        self.assertTrue(enter.get("accepted"))
+        stats = run_hunt("4", bot)
+        self.assertEqual(stats["cleared"], 2, msg=stats)
+        self.assertEqual(stats["q4_path_profile"], "hexbatch")
+        self.assertEqual(stats["q4_inner_n"], 7)
+        self.assertAlmostEqual(stats["q4_inner_r"], q4_opt_inner_r(), places=6)
+        self.assertEqual(stats["q4_outer_n"], 12)
+        self.assertAlmostEqual(stats["q4_outer_r"], 1865.0, places=6)
+        self.assertGreaterEqual(stats["q4_rh_replans"], 1)
+
     def test_hexbatch_mixed_full_clear(self):
         for seed, n, nd in ((3, 12, 4), (5, 16, 8), (11, 12, 12)):
             rng = random.Random(seed)
@@ -403,6 +425,61 @@ class TestQ4Mock(unittest.TestCase):
         self.assertEqual(stats["cleared"], len(sources), msg=stats)
 
 
+    def test_no_skip_open_path_clears_near_before_far(self):
+        start = (1800.0, 0.0)
+        pts = {
+            1: (1500.0, 80.0),
+            2: (-900.0, 0.0),
+            3: (-900.0, 400.0),
+            4: (-850.0, -350.0),
+        }
+        order = no_skip_open_path_channel_order(start, pts, local_m=650.0)
+        self.assertEqual(order[0], 1)
+        self.assertLess(order.index(1), order.index(2))
+        self.assertLess(order.index(1), order.index(3))
+        self.assertLess(order.index(1), order.index(4))
+
+    def test_hexbatch_pick_does_not_skip_nearest(self):
+        bot = _BotHex()
+        bot.position = (1800.0, 0.0)
+        policy = HuntPolicy(bot, directional=True, q4_path_profile="hexbatch")
+        policy.book.add_direction(1, (1800.0, 0.0), 180.0)
+        policy.book.add_direction(2, (-1500.0, 400.0), 0.0)
+        policy.book.add_direction(3, (-1500.0, -400.0), 0.0)
+        self.assertEqual(policy._rh_pick_channel(None), 1)
+
+    def test_hexbatch_one_obs_proxy_is_along_bearing(self):
+        policy = HuntPolicy(_BotHex(), directional=True, q4_path_profile="hexbatch")
+        s1 = (1000.0, 0.0)
+        policy.book.add_direction(4, s1, 180.0)
+        proxy = policy._estimated_service_point(4)
+        self.assertLess(abs(proxy[1]), 80.0)
+        self.assertLess(proxy[0], s1[0] - 100.0)
+        sides = recommend_second_sides_compact(s1, 180.0)
+        self.assertTrue(all(dist(proxy, p) > 200.0 for p in sides))
+
+    def test_hexbatch_second_fix_uses_one_side(self):
+        bot = _RecordingBot()
+        policy = HuntPolicy(bot, directional=True, q4_path_profile="hexbatch")
+        s1 = (1000.0, 0.0)
+        policy.book.add_direction(4, s1, 180.0)
+        bot.position = (1865.0, 0.0)
+        policy._take_second_fix(4, s1, 180.0)
+        self.assertLessEqual(len(bot.measured), 2)
+        lateral = [y for (_x, y, _ch) in bot.measured if abs(y) > 200.0]
+        self.assertLessEqual(len(lateral), 1)
+
+    def test_hexbatch_seed3_travel_not_folded(self):
+        rng = random.Random(3)
+        sources = _mix_sources(12, 6, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q4_hexbatch(bot)
+        self.assertEqual(stats["cleared"], 12, msg=stats)
+        self.assertLess(stats["travel_s"], 6100.0)
+        self.assertLess(stats["move_decomposition"]["localization_s"], 2100.0)
+
+
 class _BotHex:
     position = (0.0, 0.0)
     virtual_time_s = 0.0
@@ -415,6 +492,23 @@ class _BotHex:
     def clear(self, x, y, channel):
         self.position = (x, y)
         return {"accepted": True, "clear_result": "success"}
+
+
+class _RecordingBot:
+    def __init__(self) -> None:
+        self.position = (0.0, 0.0)
+        self.virtual_time_s = 0.0
+        self.log: list = []
+        self.measured: list[tuple[float, float, int]] = []
+
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        self.measured.append((x, y, channel))
+        return {"accepted": True, "measure_result": "no_signal"}
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        return {"accepted": True, "clear_result": "no_target_in_range"}
 
 
 if __name__ == "__main__":
