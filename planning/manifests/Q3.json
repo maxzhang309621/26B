@@ -1,0 +1,29 @@
+{
+  "question": "Q3",
+  "title": "全向干扰源快速定位与清除优化",
+  "status": "Q3_SCAN_FIRST_P0_ACCEPTED_P1_REJECTED",
+  "current_gate": "G3",
+  "profile": "lean",
+  "main_candidate": "scan_first_hexagon_batch_rh",
+  "usable_baseline": "scan_first_hexagon_batch_rh_p0_strict",
+  "conditional_fallback": "bounded_localization_and_creep",
+  "formal_test_allowed": false,
+  "next_unit": "current-dev official practice requires separate human authorization",
+  "notes": [
+    "dev branch merged from GitHub (cf9159f); Q3 lives in src/policy.py with Q1 locate_quality and Q2 next_stations.",
+    "Old Step 5 completed: deadline guard + exit reserve + action/exit retries (MAX_ACTION_ATTEMPTS=2) + terminal states; 66/66 tests pass.",
+    "Cost ledger in action_stats: travel/detect/switch/clear_ok/clear_miss/per_channel. 80-seed mean decomposition: travel 4427.86s (85.87%), detect 553.25s, switch 108.81s, clear_ok 63.75s, clear_miss 2.93s.",
+    "Step 6 move split done: backbone_planned 1463.82s (28.39%), rejoin 286.03s (5.55%), localization 789.83s (15.32%), clear_detour 1888.18s (36.62%, largest bucket). Paired-delta infra in q3_benchmark --baseline.",
+    "Step 7 clear audit done: sec_center 393/393 (100%), bearing 627/705 (88.94%, carries 61.5% of clears); 15 other bypass paths fire 0 times in 80 random cases.",
+    "Step 7b bearing gate tested and rejected: net mean gain 1.48s/case (0.0287%) with boundary regression +20.52s. Step 7c restored the active policy bit-identically.",
+    "Human accepted Step 7 and authorized Step 8 on 2026-09-11; fresh closeout regression 69/69 PASS. Step 8 remains an explicit opt-in candidate and is not the active policy.",
+    "Step 8 candidate implemented behind an explicit default-off flag. Three-case smoke and the boundary case all clear; default-off is paired-identical to Step 7.",
+    "Step 8 independent paired development seeds 100..149 completed: both policies 50/50 all-clear with clean protocol exits, but candidate mean regressed by 53.56s (+1.0576%), paired P90 by 249.57s, worst by 448.20s, and only 24% cases improved. G8 rejected; locked evaluation and Step 9 are not warranted.",
+    "Baselines: local mock 80 seeds 5156.596150225186 s bit-identical; official-practice best is 5/5 mean 5000.8 s (2026-09-11 18:24). Historical 10-game mean 5245.36 s is no longer the compare baseline.",
+    "The human selected strict scan-first as the current Q3 direction. P0 now prevents every Q3 batch clear during cover, including scan-near, and services deferred near points only after the six-point ring is complete; Q4 remains outside this gate.",
+    "P0/P1 local paired seeds 700..749 and the fixed boundary case all passed hard gates. P0 mean virtual time is 3813.4695642201273 s in local_mock_full_disk_v1.",
+    "P1 optical-grid evidence-version gate changed 0/50 cases and blocked 0 calls on the current dev baseline; mean improvement is 0%, so it is rejected by the 2% continuation rule and remains default-off.",
+    "Historical latest-10 official practice logs contain 72 optical-grid attempts, including 62 extra attempts under unchanged measurement versions, but those runs used wider grid sweeps than current dev (which already limits Q3 grid tries to one per call). A new official practice comparison is required before making a current-platform performance claim."
+  ],
+  "updated_at": "2026-09-12T16:18:25.7556136+08:00"
+}

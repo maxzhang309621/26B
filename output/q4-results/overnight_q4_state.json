@@ -1,0 +1,61 @@
+{
+  "target_s": 5000,
+  "mode": "practice_q4_only",
+  "formal_test": false,
+  "hard_rule": "Never click or start 正式测试. Only 开始问题4演练测试. Never 确认开始. Never Q3 during this loop.",
+  "stop_when": "last_10_mean_virtual_time_s <= 5000 and all 10 games full clear",
+  "baseline_5game_mean_s": 8789.4,
+  "cover_path_baseline_id": "v_nofar",
+  "cover_path_baseline_mean_s": 8508.1,
+  "cover_path_baseline_note": "User-locked Q4 compare baseline: cover path 12x2100, 10/10. Not outer11 ablation.",
+  "current_best_official_mean_s": 8421.2,
+  "current_best_official_10_mean_s": 8421.2,
+  "versions": [
+    {
+      "id": "v_nofar",
+      "official_10_mean_s": 8508.1,
+      "official_10_all_clear": true,
+      "role": "cover_path_baseline",
+      "note": "Locked Q4 baseline (cover path). Outer 12x2100. Compare all new Q4 runs to this 8508.1 / 10/10."
+    },
+    {
+      "id": "v_outer11_1900",
+      "upgrade": "Outer ring 12x2100 → 11x1900 (front-cover ok). Mid-scan abort when heard>=n. Keep skip-far-S2 + fan 12+18.",
+      "mock_8_mean_s": 8247.4,
+      "mock_80_mean_s": 7520.2,
+      "mock_80_travel_s": 6091.0,
+      "mock_80_miss": 0,
+      "official_10_mean_s": 8421.2,
+      "official_10_mean_ratio": 0.994,
+      "official_10_full_clear": 9,
+      "official_10_summary": "output/drill/q4-batch-outer11-1900-10.json",
+      "note": "Official practice 10 done 2026-09-11. Mean VT 8421.2 beats v_nofar 8508.1; 9/10 full clear (one 15/16). Keep. Do not retry outer info-gain order, dry-streak abort, outer redundant 1080m."
+    },
+    {
+      "id": "v_outer11_1900_q12",
+      "upgrade": "v_outer11_1900 + Q1 locate_quality + Q2 next_stations wired into HuntPolicy (Q4 directional).",
+      "mock_80_mean_s": 7291.9,
+      "mock_80_travel_s": 5905.1,
+      "mock_80_miss": 0,
+      "mock_80_median_s": 7211.5,
+      "mock_80_p90_s": 9131.2,
+      "official_10_mean_s": 9140.4,
+      "official_10_mean_ratio": 1.0,
+      "official_10_full_clear": 10,
+      "official_10_summary": "output/drill/q4-batch-outer11-q12-10.json",
+      "note": "Official practice 10 done 2026-09-11. 10/10 clear. Compare to cover-path baseline v_nofar 8508 (12x2100), not to outer11-only. Mean 9140 is slower than v_nofar; clear rate matched 10/10."
+    },
+    {
+      "id": "v_jung_nn",
+      "official_10_mean_s": 8553.3,
+      "official_10_all_clear": true
+    },
+    {
+      "id": "v_fan18m4",
+      "official_10_mean_s": 9137.7,
+      "official_10_all_clear": true,
+      "note": "Restored always-on fan 12+18. Do not retry."
+    }
+  ],
+  "next_upgrade": "Q4: always compare to locked cover-path baseline v_nofar 8508 (12x2100, 10/10), not outer11. Q3 official best is 5000.8 s / 5/5 from 2026-09-11 18:24 (output/baselines.md)."
+}

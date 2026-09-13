@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "question": "Q3",
+  "round": "step8_smoke",
+  "implementation_target": "python",
+  "approved_decision_id": "q3_step7_accept_and_proceed_step8_20260911",
+  "status": "PASS_FOR_DEV_EVAL",
+  "methods": [
+    {
+      "method_id": "step7_active_baseline",
+      "role": "usable_baseline",
+      "script": "src/q3_benchmark.py",
+      "status": "success",
+      "input_files": ["results/Q3/experiments/step7_clear_audit/q12_80.json"],
+      "output_files": ["results/Q3/experiments/step8_smoke/default_off_3.json"],
+      "metrics_summary": {
+        "cases": 3,
+        "all_clear": "3/3",
+        "mean_virtual_time_s": 5685.601012484101,
+        "paired_key_metrics_zero_delta": true,
+        "boundary_all_clear": "16/16"
+      },
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "method_id": "step8_clear_ready_future_edge_insertion",
+      "role": "main_candidate",
+      "script": "src/q3_benchmark.py --step8-clear-ready-insertion",
+      "status": "success",
+      "input_files": ["results/Q3/experiments/step7_clear_audit/q12_80.json"],
+      "output_files": ["results/Q3/experiments/step8_smoke/candidate_3.json"],
+      "metrics_summary": {
+        "cases": 3,
+        "all_clear": "3/3",
+        "mean_virtual_time_s": 5635.074946597713,
+        "mean_paired_delta_s": -50.526065886388096,
+        "mean_paired_delta_pct": -0.8886671044177387,
+        "candidate_better_share": 0.6666666666666666,
+        "worst_case_delta_s": 232.5807465479029,
+        "insertions": 14,
+        "insertion_successes": 14,
+        "insertion_fallbacks": 0,
+        "pending_ready_at_exit_max": 0,
+        "boundary_all_clear": "16/16",
+        "boundary_virtual_time_delta_s": -358.90884960975563
+      },
+      "warnings": [
+        "Only three random cases were used; one case regressed by 232.58 s.",
+        "This smoke does not establish mean or tail improvement and cannot authorize route adoption."
+      ],
+      "errors": []
+    }
+  ],
+  "comparison": {
+    "baseline_default_remains_active": true,
+    "candidate_requires_explicit_flag": true,
+    "mechanical_smoke_gate": "PASS",
+    "performance_gate": "NOT_EVALUATED"
+  },
+  "fallback_trigger": {
+    "fallback_id": "F1_bounded_creep",
+    "condition": "existing geometric degeneration or failed remeasurement trigger",
+    "observed": false,
+    "evidence": "creep_calls remained zero in the three candidate smoke cases and boundary case"
+  },
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "Local deterministic mock evidence only; no official practice or formal test was run.",
+    "The candidate is implementation-ready for paired development evaluation, not accepted as the active policy.",
+    "Independent development and locked seed ranges were not run in this smoke."
+  ],
+  "reviewed_at": "2026-09-11T17:43:39.5248704+08:00"
+}

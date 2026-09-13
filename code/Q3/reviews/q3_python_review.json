@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "question_id": "Q3",
+  "language": "python",
+  "review_id": "q3_python_review_step8_dev_20260911",
+  "previous_review_id": "q3_python_review_step8_smoke_20260911",
+  "decision_id": "q3_step7_accept_and_proceed_step8_20260911",
+  "reviewed_files": [
+    "code/Q3/q3_code_plan.md",
+    "src/policy.py",
+    "src/runner_q3.py",
+    "src/q3_benchmark.py",
+    "src/tests/test_q3_step8.py",
+    "results/Q3/experiments/step8_smoke/default_off_3.json",
+    "results/Q3/experiments/step8_smoke/candidate_3.json",
+    "results/Q3/experiments/step8_smoke/run_summary.json",
+    "results/Q3/experiments/step8_dev/baseline_100_149.json",
+    "results/Q3/experiments/step8_dev/candidate_100_149.json",
+    "results/Q3/experiments/step8_dev/run_summary.json"
+  ],
+  "checks": {
+    "syntax": {
+      "status": "PASS",
+      "evidence": ["Python 3.12 unittest discovery ran 73 tests with zero failures."]
+    },
+    "input_contract": {
+      "status": "PASS",
+      "evidence": [
+        "The candidate uses the existing local MockSim/RobotClient contract and requires an explicit benchmark or runner keyword flag.",
+        "No raw data, official interface, network endpoint, or formal-test input is accessed."
+      ]
+    },
+    "method_alignment": {
+      "status": "PASS",
+      "evidence": [
+        "Only Q3 clear-ready SEC centers are queued; each is assigned to the minimum-delta unexecuted backbone edge.",
+        "The eight-point backbone order and existing localization method remain unchanged; directional=True forcibly disables Step 8."
+      ]
+    },
+    "reproducibility": {
+      "status": "PASS",
+      "evidence": [
+        "The smoke uses deterministic seeds 0..2 plus the fixed 16-source boundary case and persists both baseline and candidate JSON outputs.",
+        "Default-off smoke is paired-zero against the Step 7 baseline for all reported key metrics.",
+        "The development comparison separately generated baseline and candidate results for independent seeds 100..149 and paired all 50 case IDs."
+      ]
+    },
+    "output_contract": {
+      "status": "PASS",
+      "evidence": [
+        "Benchmark output records explicit candidate enablement, per-case insertion records, insertion counts, fallbacks, planned deltas, and pending-ready state.",
+        "The development run summary records all-clear/protocol gates, paired mean/median/P90/worst/better-share, insertion/fallback counts, cost decomposition, and the G8 rejection while leaving the active baseline unchanged."
+      ]
+    }
+  },
+  "findings": [
+    {
+      "severity": "INFO",
+      "finding": "The independent development set rejects the candidate: mean +53.56 s, paired P90 +249.57 s, worst +448.20 s, and only 24% of cases improve.",
+      "disposition": "Keep the Step 7 default; do not run locked evaluation or Step 9 for this candidate."
+    },
+    {
+      "severity": "INFO",
+      "finding": "Independent per-task insertion deltas do not optimize the order of multiple tasks assigned to one edge.",
+      "disposition": "Keep this limitation for Step 8 isolation; multi-task local reordering belongs only to conditional Step 9."
+    }
+  ],
+  "verdict": "PASSED",
+  "reviewed_at": "2026-09-11T17:55:32.8490660+08:00"
+}

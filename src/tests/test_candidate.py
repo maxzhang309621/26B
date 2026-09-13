@@ -7,10 +7,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from candidate import (
+    LECTURE_H,
+    LECTURE_RHO,
+    Y_MIN,
     from_body,
+    front_compatible,
     in_candidate_region,
+    in_three_disk_intersection,
     intersection_angle_deg,
+    lecture_second_sides,
+    next_stations,
     recommend_second,
+    recommend_second_sides_compact,
+    to_body,
 )
 from geometry import add, dist, scale, unit
 
@@ -39,3 +48,58 @@ class TestCandidate(unittest.TestCase):
         self.assertGreaterEqual(beta, 60.0)
         self.assertLessEqual(beta, 120.0)
         self.assertLessEqual(dist(s2, (0.0, 0.0)), 1800.0)
+
+    def test_compact_second_is_closer(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        far = recommend_second(s1, th, now=s1)
+        a, b = recommend_second_sides_compact(s1, th)
+        self.assertLess(dist(a, s1), dist(far, s1))
+        self.assertLess(dist(b, s1), dist(far, s1))
+        self.assertGreater(dist(a, s1), 400.0)
+
+    def test_lecture_second_in_three_disks(self):
+        s1 = (0.0, 0.0)
+        th = 25.0
+        a, b = lecture_second_sides(s1, th)
+        for p in (a, b):
+            x, y = to_body(s1, th, p)
+            self.assertAlmostEqual(x, LECTURE_RHO, places=6)
+            self.assertAlmostEqual(abs(y), LECTURE_H, places=6)
+            self.assertTrue(in_three_disk_intersection(s1, th, p))
+
+    def test_next_stations_lecture_first_omni(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        pts = next_stations(s1, th, now=s1, directional=False)
+        self.assertTrue(pts)
+        x, y = to_body(s1, th, pts[0])
+        self.assertAlmostEqual(x, LECTURE_RHO, places=5)
+        self.assertAlmostEqual(abs(y), LECTURE_H, places=5)
+
+    def test_next_stations_reject_along_bearing(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        pts = next_stations(s1, th, now=s1, directional=False)
+        self.assertTrue(pts)
+        along = add(s1, scale(unit(th), 800.0))
+        self.assertFalse(in_candidate_region(s1, th, along))
+        g = (900.0, 0.0)
+        pref = pts[0]
+        ang = intersection_angle_deg(s1, pref, g)
+        self.assertGreaterEqual(ang, 25.0)
+        self.assertLessEqual(ang, 120.0)
+        for p in pts:
+            _x, y = to_body(s1, th, p)
+            self.assertGreaterEqual(abs(y), LECTURE_H - 1e-6)
+
+    def test_next_stations_directional_front_only(self):
+        s1 = (0.0, 0.0)
+        th = 0.0
+        pts = next_stations(s1, th, now=s1, directional=True)
+        self.assertTrue(pts)
+        for p in pts:
+            self.assertTrue(front_compatible(s1, th, p))
+            _x, y = to_body(s1, th, p)
+            self.assertGreaterEqual(abs(y), LECTURE_H - 1e-6)
+            self.assertNotIn(p, next_stations(s1, th, directional=True, silence=[p]))

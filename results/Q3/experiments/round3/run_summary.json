@@ -1,0 +1,60 @@
+{
+  "question": "Q3",
+  "round": 3,
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "main_candidate",
+  "status": "PASS",
+  "inputs": {
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..99",
+    "random_source_count": "10..16",
+    "source_radius_m": "0..1800 uniform by area",
+    "effective_radius_m": "1000..1500",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "baseline": "results/Q3/experiments/round2/metrics/candidate_metrics.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/round3/metrics/candidate_metrics.json",
+    "src/tests/test_q3_step3.py",
+    "code/Q3/reviews/q3_python_review.json",
+    "robustness/Q3/q3_robustness_summary.json"
+  ],
+  "metric_summary": {
+    "unit_tests": "44/44 PASS after Step3 implementation",
+    "random_all_clear": "100/100",
+    "mean_virtual_time_s": 5347.740961681709,
+    "mean_virtual_time_change_vs_round2_pct": -15.039087,
+    "mean_actions": 136.09,
+    "mean_actions_change_vs_round2_pct": 1.871398,
+    "mean_direction_measurements": 34.18,
+    "mean_direction_change_vs_round2_pct": 5.2016,
+    "mean_route_rechecks": 8.1,
+    "mean_route_recheck_hits": 8.05,
+    "mean_deferred_channels": 8.09,
+    "mean_creep_calls": 0.0,
+    "max_pending_at_exit": 0.0,
+    "max_invalid_actions": 0.0,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 6887.449289495172,
+    "boundary_change_vs_round2_pct": -8.841287,
+    "boundary_pending_at_exit": 0,
+    "boundary_exit_accepted": true,
+    "mean_dedicated_localizations": 4.69,
+    "mean_localization_services": 12.74
+  },
+  "seed": "0..99",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "平均动作数和方向测量数较 round2 小幅上升，用于换取较大的移动时间下降。",
+    "仅为本地 mock；未运行官方演练或正式测试。",
+    "第4步覆盖航路精简和第5步真实时间/终态证明均未开始。"
+  ],
+  "fallback_trigger_state": "not_triggered_in_100_random_cases_or_boundary_case"
+}

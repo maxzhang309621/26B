@@ -1,0 +1,65 @@
+{
+  "question": "Q3",
+  "probe_id": "q3_preoptimization_probe_20260911",
+  "methods": {
+    "main_candidate": "M2_triangulation_first",
+    "usable_baseline": "M1_current_creep_first",
+    "conditional_fallback": "F1_bounded_creep"
+  },
+  "executability": {
+    "status": "PASS",
+    "evidence": "Python 3.12 下 49/49 本地单元测试通过；round2、round3 与 round4 固定100局及16源边界场景均全清。"
+  },
+  "data_coverage": {
+    "status": "PASS",
+    "evidence": "固定种子0..99覆盖10–16源、R<=1800、R_eff=1000–1500，并含16源/r=1799/R_eff=1000边界；专项夹具覆盖舍入、0/360、场地/距离边界和实际六点航路解析覆盖。"
+  },
+  "assumption_checks": {
+    "status": "PASS",
+    "evidence": "Q3 使用1.01度外包络、96边外接圆盘近似和正检测1500m上界；no_signal非凸排除不用于SEC清除证明。"
+  },
+  "output_degeneracy": {
+    "status": "PASS",
+    "evidence": "round3 在100个固定随机场景与16源边界场景中均未触发 creep；平均方向观测34.18，边界场景33，且全清率保持100/100与16/16。退化夹具证明 Q3 同频道 fallback 最多执行1次、最多40步。",
+    "repair": "每次新方向观测后立即计算交会区域与最小包围圆，仅在退化或测量上限触发时进入有界 creep。"
+  },
+  "perturbation_sensitivity": {
+    "status": "PASS",
+    "evidence": "旧1.0度反例在新包络下SEC半径20.191491m，不再触发提前清除；场地/距离边界及合法/非法顺路复测夹具均通过。"
+  },
+  "scale_check": {
+    "status": "PASS",
+    "evidence": "round3固定100局100/100全清，平均虚拟时间5347.7410s，较round2下降15.0391%；44项测试约1秒完成。"
+  },
+  "verdict": "PASS",
+  "fallback_trigger": "若交会区域为空、无界、数值退化，或达到定位测量上限仍未清除，则对该频道启用 F1_bounded_creep。",
+  "evidence_refs": [
+    "src/policy.py",
+    "src/geometry.py",
+    "src/tests/test_geometry.py",
+    "src/tests/test_q3.py",
+    "results/Q3/experiments/round0/metrics/baseline_metrics.json",
+    "docs/pipeline/00-state.md"
+  ],
+  "gate_interpretation": "第2至4步已通过本地 G3 机械硬门槛；第4步六点路线存在时间与动作数权衡，等待人工取舍。这不替代官方演练、正式测试或第5步终态证明。",
+  "step1_evidence_refs": [
+    "results/Q3/experiments/round0/run_summary.json",
+    "results/Q3/experiments/round1/run_summary.json",
+    "code/Q3/reviews/q3_python_review.json",
+    "results/Q3/experiments/round1/logs/q4_regression_from_global_creep_guard.txt"
+  ],
+  "steps2_3_evidence_refs": [
+    "code/Q3/q3_code_plan.md",
+    "results/Q3/experiments/round2/run_summary.json",
+    "results/Q3/experiments/round3/run_summary.json",
+    "robustness/Q3/q3_robustness_summary.json",
+    "code/Q3/reviews/q3_python_review.json"
+  ],
+  "step4_evidence_refs": [
+    "code/Q3/q3_code_plan.md",
+    "src/tests/test_q3_step4.py",
+    "results/Q3/experiments/round4/run_summary.json",
+    "robustness/Q3/q3_robustness_summary.json",
+    "code/Q3/reviews/q3_python_review.json"
+  ]
+}

@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from policy import HuntPolicy
 from practice_guard import (
     FormalTestBlocked,
     assert_no_formal_files,
@@ -50,7 +49,6 @@ def wait_practice_enter(
     ui_hook=None,
 ) -> dict[str, Any]:
     deadline = time.time() + timeout_s
-    rid = "enter-wait-1"
     last_body: dict[str, Any] | None = None
     while time.time() < deadline:
         assert_no_formal_files(data_dir)
@@ -59,23 +57,72 @@ def wait_practice_enter(
             raise FormalTestBlocked("等待进入时出现正式测试文件，已中止且不会 /enter。")
         if ui_hook:
             ui_hook()
+        rid = bot.new_request_id("enter-wait")
         try:
             body = bot.enter(request_id=rid)
             last_body = body
             if body.get("accepted") is True:
                 return body
-            raise RuntimeError(
-                "模拟器拒绝 /enter（队号须一致，且本局尚未进入）。"
-                f" 响应={body}"
-            )
+            # API up but this round not ready yet (or stale reject) — keep polling.
         except (ConnectionError, TimeoutError, OSError):
-            rid = "enter-wait-1"
+            pass
+        except RuntimeError as exc:
+            # HTTP 4xx with accepted:false before countdown ends.
+            if "HTTP 4" not in str(exc) and "accepted" not in str(exc).lower():
+                raise
         time.sleep(0.4)
     raise TimeoutError(f"等待 /enter 超时 {timeout_s:.0f}s，最后响应={last_body}")
 
 
-def run_hunt(problem: str, bot: RobotClient) -> dict[str, Any]:
-    return HuntPolicy(bot, directional=(problem == "4")).run(do_enter=False)
+def peek_practice_result_meta(
+    data_dir: Path,
+    baseline: set[Path],
+    problem: int,
+    timeout_s: float = 4.0,
+) -> dict[str, Any] | None:
+    """If simulator drops practice-p*.result.json at window open, read omni/dir early."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        for p in sorted(
+            snapshot_files(data_dir) - baseline,
+            key=lambda x: x.stat().st_mtime if x.exists() else 0,
+        ):
+            if not is_practice_result(p, problem):
+                continue
+            try:
+                body = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            omni = body.get("omnidirectional_jammer_count")
+            dir_n = body.get("directional_jammer_count")
+            if isinstance(omni, int) and isinstance(dir_n, int):
+                return body
+        time.sleep(0.15)
+    return None
+
+
+def run_hunt(
+    problem: str,
+    bot: RobotClient,
+    target_n: int | None = None,
+    *,
+    q4_omni_n: int | None = None,
+    q4_dir_n: int | None = None,
+) -> dict[str, Any]:
+    """Run the hunt after /enter. Q4 hexbatch+corrector; Q3 hexagon batch."""
+    if problem == "4":
+        from runner_q4 import run_q4
+
+        return run_q4(
+            bot,
+            target_n=target_n,
+            do_enter=False,
+            q4_omni_n=q4_omni_n,
+            q4_dir_n=q4_dir_n,
+        )
+    from runner_q3 import run_q3_batch
+
+    return run_q3_batch(bot, target_n=target_n, do_enter=False)
 
 
 def save_drill_log(

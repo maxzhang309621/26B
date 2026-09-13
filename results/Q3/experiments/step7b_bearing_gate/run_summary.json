@@ -1,0 +1,46 @@
+{
+  "question": "Q3",
+  "round": "step7b_bearing_gate",
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "candidate_experiment",
+  "status": "REJECTED_BY_HUMAN",
+  "inputs": {
+    "branch": "dev",
+    "head": "cf9159f4aadc0fec8e62b1ae4a6bebdd71c86335",
+    "change": "bearing clear feasible-region gate (Q3 only) + at most one attempt per call",
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..79",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "baseline": "results/Q3/experiments/step7_clear_audit/q12_80.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/step7b_bearing_gate/q12_80.json",
+    "results/Q3/experiments/step7c_revert_verify/q12_80.json"
+  ],
+  "metric_summary": {
+    "mean_virtual_time_delta_s": -1.4810901313402156,
+    "mean_virtual_time_delta_pct": -0.0287,
+    "all_clear": "80/80 maintained",
+    "boundary_virtual_time_delta_s": 20.5199717276655,
+    "clear_miss_mean_delta": -0.0625,
+    "bearing_success_rate_pct": "88.94 -> 89.54",
+    "candidate_better_share": 0.0625,
+    "worst_case_delta_s": 11.957358753493281,
+    "revert_verification": "80-seed run bit-identical to step7 baseline (5156.596150225186 s)"
+  },
+  "seed": "0..79",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "Gate reduced clear misses by 6.4% but paid roughly equal extra localization; net mean gain ~0.03% (noise level).",
+    "Boundary 16-source worst case regressed +20.5 s.",
+    "Human decision: roll back the gate; step7 state restored and verified bit-identical."
+  ],
+  "fallback_trigger_state": "not_triggered"
+}

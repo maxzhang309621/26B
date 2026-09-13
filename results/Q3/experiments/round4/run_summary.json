@@ -1,0 +1,95 @@
+{
+  "question": "Q3",
+  "round": 4,
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "route_reduction_candidate",
+  "status": "PASS_WITH_TRADEOFF",
+  "human_decision_required": true,
+  "inputs": {
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..99",
+    "random_source_count": "10..16",
+    "source_radius_m": "0..1800 uniform by area",
+    "effective_radius_m": "1000..1500",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "baseline": "results/Q3/experiments/round3/metrics/candidate_metrics.json",
+    "q3_route": "center plus 6 ring points at radius 1150 m and phase 10 degrees",
+    "q4_route": "unchanged center plus 8 inner ring points and all outer points"
+  },
+  "outputs": [
+    "results/Q3/experiments/round4/metrics/candidate_metrics.json",
+    "src/coverage.py",
+    "src/tests/test_q3_step4.py",
+    "code/Q3/reviews/q3_python_review.json",
+    "robustness/Q3/q3_robustness_summary.json"
+  ],
+  "coverage_certificate": {
+    "status": "PASS",
+    "certificate_type": "analytic_regular_ring",
+    "actual_geometry_validated": true,
+    "ring_count": 6,
+    "ring_radius_m": 1150.0,
+    "phase_deg": 10.0,
+    "maximum_nearest_angle_deg": 30.000000000000018,
+    "annulus_endpoint_distances_m": {
+      "1000.0": 575.0144096418728,
+      "1800.0": 988.5114204360133
+    },
+    "annulus_worst_case_distance_m": 988.5114204360133,
+    "coverage_margin_m": 11.4885795639867,
+    "five_point_counterexample": {
+      "ring_radius_m": 1200.0,
+      "worst_case_distance_m": 1088.5984495213224,
+      "passes": false
+    }
+  },
+  "metric_summary": {
+    "unit_tests": "49/49 PASS",
+    "random_all_clear": "100/100",
+    "mean_virtual_time_s": 5441.466396980994,
+    "mean_virtual_time_change_vs_round3_pct": 1.752617338252871,
+    "mean_actions": 117.73,
+    "mean_actions_change_vs_round3_pct": -13.491072084649868,
+    "mean_measurements": 102.99,
+    "mean_measurements_change_vs_round3_pct": -15.129789864029664,
+    "mean_direction_measurements": 33.75,
+    "mean_direction_change_vs_round3_pct": -1.2580456407255691,
+    "mean_route_rechecks": 4.89,
+    "mean_route_recheck_hits": 4.82,
+    "mean_dedicated_localizations": 7.92,
+    "mean_creep_calls": 0.0,
+    "max_pending_at_exit": 0.0,
+    "max_invalid_actions": 0.0,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 7745.984169460689,
+    "boundary_virtual_time_change_vs_round3_pct": 12.465208001966221,
+    "boundary_actions": 136,
+    "boundary_pending_at_exit": 0,
+    "boundary_exit_accepted": true
+  },
+  "hard_gates": {
+    "coverage_certificate": "PASS",
+    "random_all_clear": "PASS",
+    "boundary_all_clear": "PASS",
+    "pending_at_exit": "PASS",
+    "protocol_actions": "PASS",
+    "exit_accepted": "PASS",
+    "q4_isolation": "PASS"
+  },
+  "seed": "0..99",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "六点候选通过全部安全硬门槛，但平均虚拟时间较 round3 八点路线增加 1.7526%，边界虚拟时间增加 12.4652%。",
+    "六点候选平均动作减少 13.4911%，平均测量减少 15.1298%，平均方向观测减少 1.2580%。是否采用属于建模权衡，尚待人工决定。",
+    "仅为本地 mock；未运行官方演练或正式测试。",
+    "第5步真实时间预算、重试和终态证明未开始。"
+  ],
+  "fallback_trigger_state": "not_triggered_in_100_random_cases_or_boundary_case"
+}

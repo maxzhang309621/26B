@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import math
+from typing import Sequence
+
 from geometry import Point, add, dist, dot, scale, sub, unit
 
 ARENA_R = 1800.0
 X_MIN, X_MAX = 400.0, 1300.0
 Y_MIN, Y_MAX = 400.0, 800.0
 H_DEFAULT = 600.0
+H_COMPACT = 400.0
+RHO_COMPACT = 450.0
+# Lecture Q2 heuristic: local (600, ±350) inside three 1000 m hear-guarantee disks.
+LECTURE_RHO = 600.0
+LECTURE_H = 350.0
+R_HEAR_MIN = 1000.0
 
 
 def body_axes(theta_deg: float) -> tuple[Point, Point]:
@@ -78,6 +86,87 @@ def candidate_region(s1: Point, theta_deg: float) -> list[list[Point]]:
     return [_rect_corners(s1, theta_deg, 1.0), _rect_corners(s1, theta_deg, -1.0)]
 
 
+def _clip_arena(p: Point) -> Point:
+    r = dist(p, (0.0, 0.0))
+    if r > ARENA_R:
+        return scale(p, ARENA_R / r)
+    return p
+
+
+def error_boundary_endpoints(
+    s1: Point,
+    theta_deg: float,
+    r: float = R_HEAR_MIN,
+    delta_deg: float = 1.0,
+) -> tuple[Point, Point]:
+    """±δ° ray points at distance r from S1 (lecture three-disk centers)."""
+    return (
+        from_body(s1, theta_deg + delta_deg, r, 0.0),
+        from_body(s1, theta_deg - delta_deg, r, 0.0),
+    )
+
+
+def in_three_disk_intersection(
+    s1: Point,
+    theta_deg: float,
+    p: Point,
+    r: float = R_HEAR_MIN,
+    delta_deg: float = 1.0,
+) -> bool:
+    """True if p lies in ∩ of three r-disks: S1 and the ±δ° boundary endpoints @ r.
+
+    Guarantees a source heard at S1 (worst-case min range r) can still be heard
+    at p — lecture Q2 '还能收到' set. Does not guarantee a clear after two looks.
+    """
+    e_plus, e_minus = error_boundary_endpoints(s1, theta_deg, r=r, delta_deg=delta_deg)
+    return (
+        dist(p, s1) <= r + 1e-6
+        and dist(p, e_plus) <= r + 1e-6
+        and dist(p, e_minus) <= r + 1e-6
+    )
+
+
+def lecture_second_sides(s1: Point, theta_deg: float) -> tuple[Point, Point]:
+    """Canonical lecture pair (600, ±350) in the first-bearing body frame."""
+    return (
+        _clip_arena(from_body(s1, theta_deg, LECTURE_RHO, LECTURE_H)),
+        _clip_arena(from_body(s1, theta_deg, LECTURE_RHO, -LECTURE_H)),
+    )
+
+
+def recommend_second_sides(
+    s1: Point,
+    theta_deg: float,
+    h: float = H_DEFAULT,
+) -> tuple[Point, Point]:
+    """Two orthogonal side points; clip to the arena disk."""
+    t_exit = ray_exit_t(s1, theta_deg, ARENA_R)
+    t_cap = min(1500.0, t_exit if t_exit > 0 else 1500.0)
+    rho = max(X_MIN, min(0.7 * t_cap, 0.5 * (X_MIN + min(X_MAX, t_cap))))
+    rho = min(max(rho, X_MIN), X_MAX)
+
+    def clip(p: Point) -> Point:
+        r = dist(p, (0.0, 0.0))
+        if r > ARENA_R:
+            return scale(p, ARENA_R / r)
+        return p
+
+    return clip(from_body(s1, theta_deg, rho, h)), clip(from_body(s1, theta_deg, rho, -h))
+
+
+def recommend_second_sides_compact(
+    s1: Point,
+    theta_deg: float,
+    h: float = H_COMPACT,
+    rho: float = RHO_COMPACT,
+) -> tuple[Point, Point]:
+    """Shorter orthogonal pair: enough for ±1° → 20 m clear, less travel."""
+    return (
+        _clip_arena(from_body(s1, theta_deg, rho, h)),
+        _clip_arena(from_body(s1, theta_deg, rho, -h)),
+    )
+
+
 def recommend_second(
     s1: Point,
     theta_deg: float,
@@ -115,6 +204,87 @@ def recommend_second(
     return best
 
 
+def front_compatible(s1: Point, theta_deg: float, p: Point, rho_g: float | None = None) -> bool:
+    """True if P can still lie in the 180° front half-plane of a source on the ray.
+
+    Heard-at-S1 forces the unknown heading to include S1. P is compatible when it
+    sits on the S1 side of the perpendicular through a guess G on the bearing.
+    """
+    x, _y = to_body(s1, theta_deg, p)
+    if rho_g is None:
+        rho_g = max(x + 80.0, 250.0)
+    g = from_body(s1, theta_deg, rho_g, 0.0)
+    return dot(sub(p, g), sub(s1, g)) >= -1.0
+
+
+def next_stations(
+    s1: Point,
+    theta_deg: float,
+    now: Point | None = None,
+    directional: bool = False,
+    silence: Sequence[Point] | None = None,
+) -> list[Point]:
+    """Legal second stations: lecture (600,±350) first when hear-safe, then band.
+
+    Directional mode also rejects points that sit behind the first lobe.
+    """
+    now = now if now is not None else s1
+    out: list[Point] = []
+
+    def _ok(p: Point, *, min_lateral: float) -> bool:
+        if dist(p, s1) <= 5.0:
+            return False
+        _x, y = to_body(s1, theta_deg, p)
+        if abs(y) < min_lateral - 1e-6:
+            return False
+        if silence and any(dist(p, q) < 35.0 for q in silence):
+            return False
+        if any(dist(p, q) <= 5.0 for q in out):
+            return False
+        if directional and not front_compatible(s1, theta_deg, p):
+            return False
+        return True
+
+    # Lecture pair: prefer nearer side first; require three-disk hear guarantee.
+    lecture = list(lecture_second_sides(s1, theta_deg))
+    lecture.sort(key=lambda p: dist(p, now))
+    for p in lecture:
+        if in_three_disk_intersection(s1, theta_deg, p) and _ok(p, min_lateral=LECTURE_H):
+            out.append(p)
+
+    if directional:
+        compact = list(recommend_second_sides_compact(s1, theta_deg))
+        extras: list[Point] = list(compact)
+        for rho, h in ((320.0, 400.0), (400.0, 450.0)):
+            extras.extend(
+                (
+                    _clip_arena(from_body(s1, theta_deg, rho, h)),
+                    _clip_arena(from_body(s1, theta_deg, rho, -h)),
+                )
+            )
+        g_hat = from_body(s1, theta_deg, 800.0, 0.0)
+        scored: list[tuple[int, float, Point]] = []
+        for p in extras:
+            if not _ok(p, min_lateral=Y_MIN):
+                continue
+            ang = intersection_angle_deg(s1, p, g_hat)
+            if p in compact or (55.0 <= ang <= 125.0):
+                front = 0 if front_compatible(s1, theta_deg, p) else 1
+                scored.append((front, dist(p, now), p))
+        scored.sort()
+        for _, _, p in scored:
+            if all(dist(p, q) > 5.0 for q in out):
+                out.append(p)
+        return out
+
+    pref = recommend_second(s1, theta_deg, now=now)
+    rest = [p for p in recommend_second_sides_compact(s1, theta_deg) if dist(p, pref) > 5.0]
+    for p in [pref] + rest:
+        if _ok(p, min_lateral=Y_MIN):
+            out.append(p)
+    return out
+
+
 def intersection_angle_deg(s1: Point, s2: Point, g: Point) -> float:
     v1 = sub(s1, g)
     v2 = sub(s2, g)
@@ -124,3 +294,37 @@ def intersection_angle_deg(s1: Point, s2: Point, g: Point) -> float:
         return 0.0
     c = max(-1.0, min(1.0, dot(v1, v2) / (n1 * n2)))
     return math.degrees(math.acos(c))
+
+def recommend_second_options(
+    s1: Point,
+    theta_deg: float,
+    now: Point | None = None,
+    h: float = H_DEFAULT,
+) -> list[Point]:
+    """Return only arena- and band-legal second stations, nearest first."""
+    t_exit = ray_exit_t(s1, theta_deg, ARENA_R)
+    t_cap = min(1500.0, t_exit if t_exit > 0 else 1500.0)
+    rho = max(X_MIN, min(0.7 * t_cap, 0.5 * (X_MIN + min(X_MAX, t_cap))))
+    rho = min(max(rho, X_MIN), X_MAX)
+    now = now if now is not None else s1
+    heights: list[float] = []
+    for value in (h, 500.0, 400.0, Y_MIN):
+        hh = abs(float(value))
+        if Y_MIN <= hh <= Y_MAX and all(abs(hh - old) > 1e-9 for old in heights):
+            heights.append(hh)
+    for hh in heights:
+        options = [
+            from_body(s1, theta_deg, rho, sign * hh)
+            for sign in (1.0, -1.0)
+        ]
+        legal = [
+            p
+            for p in options
+            if math.isfinite(p[0])
+            and math.isfinite(p[1])
+            and in_candidate_region(s1, theta_deg, p)
+        ]
+        if legal:
+            legal.sort(key=lambda p: (dist(p, now), dist(p, (0.0, 0.0))))
+            return legal
+    return []

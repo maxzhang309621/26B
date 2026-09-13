@@ -1,0 +1,109 @@
+{
+  "generated_at": "2026-09-11",
+  "scope": "output/drill overnight_*_10.json + q4-batch-*.json (240 games total)",
+  "threshold_s": 10000,
+  "games_ge_10k": 57,
+  "correlation_overnight_only": {
+    "ge_10k_n": 54,
+    "ge_10k_avg_directional": 10.2,
+    "ge_10k_avg_omni": 3.9,
+    "ge_10k_avg_travel_s": 10144,
+    "ge_10k_avg_detect_s": 1334,
+    "ge_10k_avg_n_measure": 226,
+    "ge_10k_avg_clear_miss": 28,
+    "lt_8k_n": 26,
+    "lt_8k_avg_directional": 3.5,
+    "lt_8k_avg_omni": 9.7,
+    "lt_8k_avg_travel_s": 5982,
+    "lt_8k_avg_detect_s": 1094
+  },
+  "locked_baseline_v_nofar": {
+    "mean_s": 8508.1,
+    "games_ge_10k": 1,
+    "high_game": {
+      "index": 9,
+      "virtual_time_s": 10283.3,
+      "cleared": 12,
+      "jammer_count": 12,
+      "omni": 2,
+      "dir": 10,
+      "travel_m": 42912,
+      "detect_s": 1566,
+      "n_measure": 264,
+      "clear_miss": 25,
+      "case_code": "8GY3-T3ZG-9SYF-C3S3",
+      "log": "output/drill/p4-20260911-031051.json"
+    },
+    "fast_game": {
+      "index": 5,
+      "virtual_time_s": 6162.1,
+      "cleared": 16,
+      "jammer_count": 16,
+      "omni": 12,
+      "dir": 4,
+      "travel_m": 27126,
+      "detect_s": 642,
+      "case_code": "YN3C-ZEDA-PTYD-4HK8",
+      "log": "output/drill/p4-20260911-030938.json"
+    }
+  },
+  "worst_single_games": [
+    {
+      "batch": "overnight_v_outer12",
+      "index": 9,
+      "virtual_time_s": 15567.0,
+      "cleared": 13,
+      "omni": 6,
+      "dir": 7,
+      "case_code": "SR96-VVNX-Y777-RE7X"
+    },
+    {
+      "batch": "overnight_v_creep8",
+      "index": 4,
+      "virtual_time_s": 15540.1,
+      "cleared": 16,
+      "omni": 9,
+      "dir": 7,
+      "case_code": "NCN5-5U56-GYGE-EHE7"
+    },
+    {
+      "batch": "q4-batch-summary (outer11+q12)",
+      "index": 8,
+      "virtual_time_s": 11461.9,
+      "cleared": 12,
+      "omni": 2,
+      "dir": 10,
+      "travel_m": 48480,
+      "clear_miss": 27,
+      "case_code": "RQFX-QK6M-SWXW-XMMJ",
+      "log": "output/drill/p4-20260911-131424.json"
+    },
+    {
+      "batch": "q4-batch-summary (outer11+q12)",
+      "index": 5,
+      "virtual_time_s": 11425.5,
+      "cleared": 15,
+      "omni": 14,
+      "dir": 1,
+      "travel_m": 51433,
+      "clear_miss": 24,
+      "case_code": "U7DA-TU54-RQ67-VBAH",
+      "log": "output/drill/p4-20260911-131250.json"
+    }
+  ],
+  "batch_means_ge_10k_count": {
+    "overnight_v_r2100": {"mean_s": 10758.2, "ge_10k": 6},
+    "overnight_v_outer6": {"mean_s": 10466.2, "ge_10k": 5},
+    "overnight_v_ch12": {"mean_s": 9965.6, "ge_10k": 5},
+    "overnight_v_fan12": {"mean_s": 9952.5, "ge_10k": 5},
+    "overnight_v_fix6": {"mean_s": 9854.3, "ge_10k": 4},
+    "q4-batch-summary": {"mean_s": 9140.4, "ge_10k": 3},
+    "overnight_v_nofar": {"mean_s": 8508.1, "ge_10k": 1}
+  },
+  "interpretation": [
+    "High VT is driven mainly by extra travel (40–51 km vs ~27–36 km on fast games) and/or many directionals (avg dir≈10 on >=10k games).",
+    "v_nofar baseline only had 1/10 above 10k; mean 8508 is pulled up by that outlier + several 9k games.",
+    "Afternoon outer11+q12 batch had 3/10 >=10k (11462/11426/...) due to extreme travel >48 km despite full clear.",
+    "Worst overnight ablations (outer12/creep8/r2100) hit 13–15k; not used as baseline."
+  ]
+}

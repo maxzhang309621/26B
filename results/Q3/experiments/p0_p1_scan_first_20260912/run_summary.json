@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "question": "Q3",
+  "round": "p0_p1_scan_first_20260912",
+  "implementation_target": "python",
+  "authorization_source": "user conversation on 2026-09-12",
+  "status": "P0_ACCEPTED_P1_REJECTED",
+  "methods": [
+    {
+      "method_id": "p0_strict_scan_first",
+      "role": "active_baseline",
+      "script": "src/q3_benchmark.py",
+      "seed_range": [700, 749],
+      "output_files": [
+        "results/Q3/experiments/p0_p1_scan_first_20260912/metrics/p0_baseline_complete_700_749.json"
+      ],
+      "sha256": "5E7A48D215A54FF1E073B908DC810D7F66715BA9C0D4149A03BD7D0B97E376EC",
+      "metrics_summary": {
+        "cases": 50,
+        "all_clear": "50/50",
+        "mean_virtual_time_s": 3813.4695642201273,
+        "median_virtual_time_s": 3826.9457104651456,
+        "p90_virtual_time_s": 4133.693086211105,
+        "max_virtual_time_s": 4375.855981142515,
+        "pending_at_exit_max": 0,
+        "invalid_action_count_max": 0,
+        "exit_accepted": "50/50",
+        "boundary_all_clear": "16/16",
+        "boundary_virtual_time_s": 4639.408324830551
+      }
+    },
+    {
+      "method_id": "p1_optical_grid_evidence_gate",
+      "role": "rejected_candidate",
+      "script": "historical default-off candidate removed before competition commit",
+      "seed_range": [700, 749],
+      "output_files": [
+        "results/Q3/experiments/p0_p1_scan_first_20260912/metrics/p1_candidate_complete_700_749.json"
+      ],
+      "sha256": "3649BD1CA97C5FEA1257E28A03885B1D573665E4A45F2827A131E67502B1F99D",
+      "metrics_summary": {
+        "cases": 50,
+        "all_clear": "50/50",
+        "mean_virtual_time_s": 3813.4695642201273,
+        "p90_virtual_time_s": 4133.693086211105,
+        "mean_paired_delta_s": 0.0,
+        "mean_paired_improvement_pct": 0.0,
+        "p90_paired_delta_s": 0.0,
+        "worst_paired_delta_s": 0.0,
+        "changed_cases": 0,
+        "evidence_gate_blocks": 0,
+        "pending_at_exit_max": 0,
+        "invalid_action_count_max": 0,
+        "exit_accepted": "50/50",
+        "boundary_all_clear": "16/16",
+        "boundary_virtual_time_s": 4639.408324830551
+      }
+    }
+  ],
+  "comparison": {
+    "paired_cases": 50,
+    "same_seed_range": true,
+    "hard_safety_gate": "PASS",
+    "mean_improvement_gate": "FAIL",
+    "p1_verdict": "REJECT",
+    "p1_enabled_in_default_runner": false,
+    "p2_allowed": false,
+    "p3_allowed_by_plan": false,
+    "reason": "P1 changed zero of 50 paired cases and produced 0% mean improvement, below the preregistered 2% continuation threshold."
+  },
+  "cost_decomposition_mean_s": {
+    "p0_active_baseline": {
+      "travel": 3172.569564220127,
+      "detect": 476.5000000000002,
+      "switch": 93.26,
+      "clear_ok": 64.89999999999998,
+      "clear_miss": 6.24,
+      "backbone_planned": 1380.0,
+      "backbone_rejoin": 0.0,
+      "localization": 187.55992119650546,
+      "clear_detour": 1605.0096430236213
+    }
+  },
+  "official_log_diagnostic": {
+    "environment": "historical official practice; not rerun",
+    "latest_10_optical_grid_attempts": 72,
+    "attempts_on_global_25m_grid": 72,
+    "same_measure_version_excess_attempts": 62,
+    "evidence_versions": 10,
+    "interpretation": "The historical runs used a wider per-call grid sweep. Current dev already has OPTICAL_GRID_MAX_TRIES=1, so P1 is redundant in the current local mock and cannot be promoted from those older logs."
+  },
+  "verification": {
+    "unit_tests": "136/136 PASS",
+    "q4_directional_included": true,
+    "git_diff_check": "PASS"
+  },
+  "environment": {
+    "os": "Windows",
+    "python": "3.12.7",
+    "interpreter": ".venv/Scripts/python.exe",
+    "suite": "local_mock_full_disk_v1",
+    "formal_test": false,
+    "official_practice": false
+  },
+  "warnings": [
+    "P0 is a semantic freeze, not a demonstrated speed improvement.",
+    "The rejected P1 implementation was removed from production code before commit; its local output remains as historical evidence.",
+    "The two per-case benchmark JSON files are retained locally but omitted from the competition commit; this compact summary records their paths and SHA-256 hashes.",
+    "The latest official ten-run evidence predates or differs from the current dev optical-grid behavior; local and official metrics must not be pooled.",
+    "No official practice, formal test, commit, push, or route switch was performed."
+  ],
+  "reviewed_at": "2026-09-12T16:18:25.7556136+08:00"
+}

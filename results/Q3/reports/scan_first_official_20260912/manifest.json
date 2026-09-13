@@ -1,0 +1,22 @@
+{
+  "scope": "analysis-only replay; no simulator or official endpoint invoked",
+  "sources": [
+    "Jammers-simulator/JammersSimulatorData/behavior-logs/practice-p3-*.result.json",
+    "output/drill/p3-YYYYMMDD-HHMMSS.json"
+  ],
+  "selection": "ten latest Q3 practice result records by ended_at_utc",
+  "transformations": [
+    "sort official Q3 practice metadata by ended_at_utc and select latest 10",
+    "match plaintext replay by UTC+8 completion timestamp",
+    "split scan/service immediately before the first clear action",
+    "reconstruct path lengths from consecutive request positions",
+    "compute post-hoc exact open-path lower bound only from final successful clear positions"
+  ],
+  "figures": [
+    "latest_10_overview.png",
+    "selected_scan_first_paths.png"
+  ],
+  "data_table": "latest_10_metrics.csv",
+  "summary": "summary.json",
+  "posthoc_oracle_warning": "Uses final successful clear positions; diagnostic lower bound only and forbidden as online policy input."
+}

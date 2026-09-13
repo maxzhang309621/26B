@@ -16,11 +16,12 @@ from candidate import (
     to_body,
     from_body,
 )
-from coverage import coverage_ok, omni_waypoints
+from coverage import coverage_ok, omni_waypoints, q3_waypoints, open_path_channel_order, open_path_cost
 from geometry import add, dist, scale, unit
 from mock_sim import MockSim, Source
+from policy import HuntPolicy
 from robot_client import FnTransport, RobotClient
-from runner_q3 import run_q3
+from runner_q3 import run_q3, run_q3_batch
 
 
 class TestCandidate(unittest.TestCase):
@@ -78,6 +79,248 @@ class TestQ3Mock(unittest.TestCase):
                 msg=f"seed={seed} n={n} cleared={stats['cleared']} ch={stats['channels']}",
             )
             self.assertGreater(len(bot.log), 4)
+
+    def test_batch_clear_all_seeds(self):
+        for seed, n in ((0, 10), (1, 12), (2, 16)):
+            rng = random.Random(seed)
+            sources = _random_omni(n, rng)
+            sim = MockSim(robot_id="team-test", sources=sources)
+            bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+            stats = run_q3_batch(bot)
+            self.assertEqual(stats["cleared"], n, msg=f"seed={seed} {stats}")
+            self.assertEqual(stats["q3_path_profile"], "batch")
+            self.assertEqual(stats["q3_ring_n"], 6)
+            self.assertAlmostEqual(stats["q3_ring_r"], 1150.0, places=6)
+
+    def test_batch_uses_hexagon_cover(self):
+        bot = _MoveBot()
+        policy = HuntPolicy(bot, directional=False)
+        self.assertEqual(policy.q3_path_profile, "batch")
+        self.assertEqual(policy.waypoints, q3_waypoints())
+        self.assertEqual(len(policy.waypoints), 7)
+
+    def test_batch_searches_ring_before_offpath_clear(self):
+        rng = random.Random(1)
+        sources = _random_omni(12, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q3_batch(bot)
+        self.assertEqual(stats["cleared"], 12)
+        cover = q3_waypoints()
+        cover_measures = 0
+        for rec in bot.log:
+            path = rec.get("path")
+            body = rec.get("response") or {}
+            if path != "/measure" or body.get("accepted") is not True:
+                continue
+            pos = (rec.get("request") or {}).get("position")
+            if not pos:
+                continue
+            xy = (pos["x"], pos["y"])
+            if any(dist(xy, w) < 8.0 for w in cover):
+                cover_measures += 1
+        # Strict scan-first keeps every clear out of the cover phase.
+        self.assertGreaterEqual(cover_measures, 4)
+        self.assertFalse(stats["q3_cover_enroute_enabled"])
+        self.assertEqual(stats["q3_cover_enroute_clears"], 0)
+
+    def test_cover_enroute_clear_is_disabled_by_default(self):
+        bot = _MoveBot()
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy.book.add_direction(3, (0.0, 0.0), 0.0)
+        policy.book.add_direction(3, (100.0, 100.0), 270.0)
+        policy._cover_enroute_points = lambda ch: [("bearing", (50.0, 0.0))]
+
+        policy._cover_enroute_clears((100.0, 0.0))
+
+        self.assertEqual(bot.position, (0.0, 0.0))
+        self.assertEqual(policy.q3_cover_enroute_clears, 0)
+
+    def test_cover_near_clear_is_deferred_until_cover_finishes(self):
+        bot = _NearClearBot()
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy._cover_phase = True
+
+        policy._scan_point((0.0, 0.0), [3])
+
+        self.assertEqual(bot.clear_calls, 0)
+        self.assertIn(3, policy._q3_deferred_cover_clears)
+        policy._cover_phase = False
+        policy._service_q3_deferred_cover_clears()
+        self.assertEqual(bot.clear_calls, 1)
+        self.assertIn(3, policy.book.cleared)
+
+    def test_cover_edge_second_look_stays_on_ring_edge(self):
+        wps = q3_waypoints()
+        start, dest = wps[1], wps[2]
+        bot = _MoveBot(start)
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy.book.add_direction(5, (0.0, 0.0), 0.0)
+        policy._cover_edge_second_looks(start, dest, [])
+        self.assertGreaterEqual(len(bot.measures), 1)
+        for _ch, xy in bot.measures:
+            span = dist(start, dest)
+            via = dist(start, xy) + dist(xy, dest)
+            self.assertLess(via, span + 1e-6)
+
+
+class _MoveBot:
+    def __init__(self, xy=(0.0, 0.0)):
+        self.position = xy
+        self.virtual_time_s = 0.0
+        self.log = []
+        self.measures = []
+        self.clear_calls = 0
+
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        self.measures.append((channel, (x, y)))
+        return {"accepted": True, "measure_result": "direction", "svd_deg": 0.0}
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        self.clear_calls += 1
+        return {"accepted": True, "clear_result": "miss"}
+
+
+class _NearClearBot(_MoveBot):
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        self.measures.append((channel, (x, y)))
+        return {"accepted": True, "measure_result": "near"}
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        self.clear_calls += 1
+        return {"accepted": True, "clear_result": "success"}
+
+
+class TestRecedingHorizonClear(unittest.TestCase):
+    def test_open_path_channel_order_starts_at_near_city(self):
+        order = open_path_channel_order(
+            (0.0, 0.0),
+            {1: (1000.0, 0.0), 2: (80.0, 0.0), 3: (80.0, 900.0)},
+        )
+        self.assertEqual(order[0], 2)
+        self.assertEqual(set(order), {1, 2, 3})
+        self.assertGreater(
+            open_path_cost((0.0, 0.0), [(1000.0, 0.0), (80.0, 0.0), (80.0, 900.0)]),
+            open_path_cost((0.0, 0.0), [(80.0, 0.0), (80.0, 900.0), (1000.0, 0.0)]),
+        )
+
+    def test_rh_pick_uses_open_tsp_from_current_pose(self):
+        bot = _MoveBot((0.0, 0.0))
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        pts = {1: (1000.0, 0.0), 2: (90.0, 0.0), 3: (90.0, 850.0)}
+        for ch in pts:
+            policy.book.add_direction(ch, (0.0, 0.0), 0.0)
+        policy._estimated_service_point = lambda ch: pts[ch]
+        self.assertEqual(policy._rh_pick_channel(None), 2)
+
+    def test_rh_service_step_truncates_long_second_look(self):
+        bot = _MoveBot((0.0, 0.0))
+        policy = HuntPolicy(bot, directional=False, q3_path_profile="batch")
+        policy.book.add_direction(4, (0.0, 0.0), 0.0)
+        policy._estimated_service_point = lambda ch: (900.0, 0.0)
+        policy._rh_service_step(4)
+        gap = dist(bot.position, (0.0, 0.0))
+        self.assertGreater(gap, 100.0)
+        self.assertLess(gap, 400.0)
+        self.assertEqual(bot.measures[0][0], 4)
+
+    def test_batch_rh_replans_more_than_source_count(self):
+        rng = random.Random(1)
+        sources = _random_omni(12, rng)
+        sim = MockSim(robot_id="team-test", sources=sources)
+        bot = RobotClient(robot_id="team-test", transport=FnTransport(sim.handle))
+        stats = run_q3_batch(bot)
+        self.assertEqual(stats["cleared"], 12)
+        self.assertGreaterEqual(stats["q3_rh_replans"], 12)
+        self.assertGreaterEqual(stats["q3_rh_steps"], 12)
+
+
+class _NoCreepPolicy(HuntPolicy):
+    def __init__(self, bot) -> None:
+        super().__init__(bot, directional=False)
+        self.creep_attempts = 0
+
+    def _creep_clear(self, ch, start, th):
+        self.creep_attempts += 1
+        return False
+
+
+class _ExactBearingBot:
+    def __init__(self, target):
+        self.target = target
+        self.position = (0.0, 0.0)
+        self.measure_points = []
+        self.clear_points = []
+
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        self.measure_points.append((x, y))
+        if dist((x, y), self.target) <= 5.0:
+            return {"accepted": True, "measure_result": "near"}
+        bearing = math.degrees(
+            math.atan2(self.target[1] - y, self.target[0] - x)
+        ) % 360.0
+        return {
+            "accepted": True,
+            "measure_result": "direction",
+            "svd_deg": round(bearing, 2),
+        }
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        self.clear_points.append((x, y))
+        result = "success" if dist((x, y), self.target) <= 20.0 else "no_target_in_range"
+        return {"accepted": True, "clear_result": result}
+
+
+class TestTriangulationFirst(unittest.TestCase):
+    def test_second_bearing_is_fused_before_creep(self):
+        bot = _ExactBearingBot((800.0, 0.0))
+        policy = _NoCreepPolicy(bot)
+        policy.book.add_direction(3, (0.0, 0.0), 0.0)
+
+        policy._localize_and_clear(3)
+
+        self.assertIn(3, policy.book.cleared)
+        self.assertEqual(policy.creep_attempts, 0)
+        self.assertEqual(len(bot.measure_points), 1)
+        self.assertEqual(len(bot.clear_points), 1)
+
+
+class _AlwaysDirectionBot:
+    def __init__(self):
+        self.position = (0.0, 0.0)
+        self.clear_calls = 0
+
+    def measure(self, x, y, channel):
+        self.position = (x, y)
+        return {"accepted": True, "measure_result": "direction", "svd_deg": 0.0}
+
+    def clear(self, x, y, channel):
+        self.position = (x, y)
+        self.clear_calls += 1
+        return {"accepted": True, "clear_result": "no_target_in_range"}
+
+
+class TestBoundedFallback(unittest.TestCase):
+    def test_creep_fallback_runs_at_most_once_per_channel(self):
+        bot = _AlwaysDirectionBot()
+        policy = HuntPolicy(bot, directional=False)
+        policy.book.add_direction(7, (0.0, 0.0), 0.0)
+
+        policy._localize_and_clear(7)
+        calls_after_first = policy.creep_calls
+        steps_after_first = policy.creep_steps
+        policy._home_and_clear(7)
+
+        self.assertEqual(calls_after_first, 1)
+        self.assertLessEqual(steps_after_first, 40)
+        self.assertEqual(policy.creep_calls, calls_after_first)
+        self.assertEqual(policy.creep_steps, steps_after_first)
 
 
 if __name__ == "__main__":

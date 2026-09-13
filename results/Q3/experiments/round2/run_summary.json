@@ -1,0 +1,51 @@
+{
+  "question": "Q3",
+  "round": 2,
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "main_candidate",
+  "status": "PASS",
+  "inputs": {
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..99",
+    "random_source_count": "10..16",
+    "source_radius_m": "0..1800 uniform by area",
+    "effective_radius_m": "1000..1500",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "baseline": "results/Q3/experiments/round1/metrics/candidate_metrics.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/round2/metrics/candidate_metrics.json",
+    "src/tests/test_q3_step2.py",
+    "robustness/Q3/q3_robustness_summary.json"
+  ],
+  "metric_summary": {
+    "unit_tests": "37/37 PASS at Step2 checkpoint",
+    "random_all_clear": "100/100",
+    "mean_virtual_time_s": 6294.354403238216,
+    "mean_virtual_time_change_vs_round1_pct": 0.007169,
+    "mean_actions": 133.59,
+    "mean_direction_measurements": 32.49,
+    "mean_creep_calls": 0.0,
+    "max_inconsistent_regions": 0.0,
+    "max_invalid_actions": 0.0,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_s": 7555.448133595943,
+    "boundary_change_vs_round1_pct": -1.650471,
+    "boundary_exit_accepted": true
+  },
+  "seed": "0..99",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "仅为本地 mock 与边界夹具，不能替代官方演练或正式测试。",
+    "no_signal 排除圆是非凸证据，只用于记录、矛盾诊断和候选排序；未用于缩小安全清除包络。",
+    "本轮没有实现 certified_absent，也不宣称完成第5步终态证明。"
+  ],
+  "fallback_trigger_state": "not_triggered_in_100_random_cases_or_boundary_case"
+}

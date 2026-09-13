@@ -116,6 +116,7 @@ class MockSim:
                 "max_virtual_duration_s": 360000,
                 "max_real_duration_s": 1200,
                 "remaining_real_duration_s": 1200,
+                "jammer_count": len(self.sources),
             }
         )
         return body

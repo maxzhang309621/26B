@@ -1,16 +1,102 @@
-"""Search-localize-clear controller for problems 3 and 4."""
+"""Search-localize-clear controller for problems 3 and 4.
+
+Engineering guard: a monotonic real-time budget read from the /enter response
+and explicit terminal evidence.  When no deadline is armed and no action
+fails, the guard is inert and the normal Q3/Q4 path is unchanged.
+"""
 
 from __future__ import annotations
 
-from geometry import Point, add, dist, intersect_cones, scale, smallest_enclosing_circle, sub, unit
-from candidate import recommend_second
-from belief import ChannelBook
-from coverage import directional_waypoints, omni_waypoints
+import math
+import time
+from typing import Callable
+
+from geometry import (
+    Point,
+    Q3_ANGLE_HALF_WIDTH_DEG,
+    Q3_ARENA_R,
+    add,
+    cross,
+    dist,
+    intersect_cones,
+    intersect_feasible_region,
+    locate_quality,
+    optical_grid_centers,
+    scale,
+    smallest_enclosing_circle,
+    sub,
+    unit,
+)
+from candidate import (
+    front_compatible,
+    from_body,
+    in_candidate_region,
+    next_stations,
+    ray_exit_t,
+    recommend_second,
+    recommend_second_options,
+    recommend_second_sides_compact,
+    to_body,
+)
+from dir_corrector import heard_region, locate_quality_dir, next_station_dir
+from belief import ChannelBook, Detection, R_RULE_OUT
+from coverage import (
+    ENROUTE_R,
+    INNER_R_MAX,
+    Q4_OPT_OUTER_N,
+    Q4_OPT_OUTER_R,
+    Q4_OUTER_FULL_N,
+    Q4_OUTER_FULL_R,
+    covering_phases,
+    directional_waypoints,
+    omni_waypoints,
+    q3_waypoints,
+    q4_opt_search_waypoints,
+    open_path_channel_order,
+    open_path_cost,
+    no_skip_open_path_channel_order,
+    pick_q4_outer_ring,
+    sector_fused_order,
+)
 from robot_client import RobotClient
 
 CLEAR_R = 20.0
 MAX_FIX_MEASURES = 12
 MAX_TOTAL_CLEARED = 16
+ARENA_LIM = 2500.0
+SPEED_MPS = 5.0
+MAX_CLEAR_MISS_PER_CH = 12
+MAX_UNCHARGED_CLEAR_PER_CH = 3
+FAN_CLEAR_OFFSETS = (12.0, 18.0)
+MAX_CREEP_STEPS_DIR = 8
+DEFAULT_EXIT_RESERVE_S = 15.0
+MAX_ACTION_ATTEMPTS = 2
+# Receding-horizon open TSP (Q3 batch clear): execute a short prefix, replan.
+Q3_RH_STEP_M = 280.0
+# With >=2 AOA fixes, skip intermediate listens and drive straight to the service point.
+Q3_RH_DIRECT_MULTI_OBS = True
+Q3_RH_SWITCH_MARGIN_M = 50.0
+Q3_RH_MAX_ITERS = 480
+# During cover: clear SEC-ready sources whose extra path vs the next listen is small.
+# extra = d(now,C)+d(C,next)-d(now,next); ~140 m off-track ≈ 280 m extra.
+Q3_COVER_ENROUTE_EXTRA_M = 280.0
+# Q4 hexbatch cover: same extra-path gate; certified 7+12 listens stay fixed.
+Q4_COVER_ENROUTE_EXTRA_M = 280.0
+# On a ring edge: second look only if a legal Q2 station sits on the segment
+# and no later hexagon vertex already provides that look.
+Q3_COVER_EDGE_SECOND = True
+Q3_COVER_EDGE_TS = (0.25, 0.4, 0.5, 0.6, 0.75)
+# Q4 hexbatch: prefer local clears before far TSP legs; proxy second-look radius.
+Q4_CLEAR_LOCAL_M = 650.0
+Q4_CLEAR_PROXY_RHO = 380.0
+OPTICAL_GRID_M = 25.0
+# Q3: grid is only for an already-small SEC. A large cone must take another bearing.
+OPTICAL_GRID_MAX_CELLS = 8
+OPTICAL_GRID_MAX_TRIES = 1
+OPTICAL_GRID_MAX_SEC_R = 28.0
+OPTICAL_GRID_ABORT_MISSES = 1
+# Q4 hexbatch keeps the wider feasible-polygon sweep.
+Q4_OPTICAL_GRID_MAX_CELLS = 512
 
 
 def _perp(p: Point) -> Point:
@@ -18,6 +104,58 @@ def _perp(p: Point) -> Point:
     if n < 1e-9:
         return (0.0, 1.0)
     return (-p[1] / n, p[0] / n)
+
+
+def _lerp(a: Point, b: Point, t: float) -> Point:
+    return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+
+
+def _rays_meet(p1: Point, th1: float, p2: Point, th2: float) -> Point | None:
+    """Intersection of two bearing lines; None if nearly parallel or far behind."""
+    u1, u2 = unit(th1), unit(th2)
+    den = cross(u1, u2)
+    if abs(den) < 0.08:
+        return None
+    w = sub(p2, p1)
+    t = cross(w, u2) / den
+    s = cross(w, u1) / den
+    if t < -30.0 or s < -30.0:
+        return None
+    q = add(p1, scale(u1, t))
+    if dist(q, (0.0, 0.0)) > ARENA_LIM:
+        return None
+    return q
+
+
+def _best_fixes(obs: list[Detection]) -> list[Point]:
+    scored: list[tuple[float, Point]] = []
+    for i, a in enumerate(obs):
+        for b in obs[i + 1 :]:
+            q = _rays_meet(a.xy, a.svd_deg, b.xy, b.svd_deg)
+            if q is None:
+                continue
+            u1, u2 = unit(a.svd_deg), unit(b.svd_deg)
+            sep = dist(a.xy, b.xy)
+            scored.append((abs(cross(u1, u2)) * min(sep, 1200.0), q))
+    scored.sort(reverse=True)
+    out: list[Point] = []
+    for _, q in scored:
+        if all(dist(q, p) > 8.0 for p in out):
+            out.append(q)
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _diverse_obs(obs: list[Detection], k: int = 4) -> list[Detection]:
+    if len(obs) <= k:
+        return list(obs)
+    picked = [obs[0]]
+    rest = list(obs[1:])
+    while len(picked) < k and rest:
+        j = max(range(len(rest)), key=lambda i: min(dist(rest[i].xy, p.xy) for p in picked))
+        picked.append(rest.pop(j))
+    return picked
 
 
 def _third_point(vertices: list[Point], now: Point) -> Point:
@@ -41,180 +179,2132 @@ def _accepted(body: dict) -> bool:
     return body.get("accepted") is True
 
 
+def action_stats(log: list[dict], speed_mps: float = SPEED_MPS) -> dict:
+    """Reconstruct travel / detect / switch / clear-ok / clear-miss from a RobotClient action log.
+
+    Attribution convention: each action's travel and dwell are attributed to
+    the action's target channel.  A measure dwell is detect time (5 s) plus
+    channel-switch time (1 s) when the tuned channel changed; a clear dwell is
+    success (5 s) or miss (3 s) time.  The tuned channel mirrors the
+    simulator: only /measure changes it.
+    """
+    pos = (0.0, 0.0)
+    travel_m = 0.0
+    detect_s = 0.0
+    switch_s = 0.0
+    clear_ok_s = 0.0
+    clear_miss_s = 0.0
+    n_measure = n_clear = clear_ok = clear_miss = 0
+    last_vt = 0.0
+    tuned_channel = 1
+    per_channel: dict[int, dict[str, float | int]] = {}
+
+    def entry(ch: int) -> dict[str, float | int]:
+        return per_channel.setdefault(
+            ch,
+            {
+                "n_measure": 0,
+                "n_clear": 0,
+                "clear_ok": 0,
+                "clear_miss": 0,
+                "travel_s": 0.0,
+                "detect_s": 0.0,
+                "switch_s": 0.0,
+                "clear_s": 0.0,
+            },
+        )
+
+    for rec in log:
+        path = rec.get("path")
+        if path not in ("/measure", "/clear"):
+            continue
+        body = rec.get("response") or {}
+        if body.get("accepted") is not True:
+            continue
+        req = rec.get("request") or {}
+        p = req.get("position") or {}
+        xy = (float(p["x"]), float(p["y"]))
+        ch = int(req.get("channel") or 0)
+        if ch < 1 or ch > 20:
+            continue
+        d = dist(pos, xy)
+        travel = d / speed_mps
+        travel_m += d
+        pos = xy
+        vt = float(body.get("virtual_time_s") or last_vt)
+        dwell = max(0.0, vt - last_vt - travel)
+        last_vt = vt
+        e = entry(ch)
+        e["travel_s"] += travel
+        if path == "/measure":
+            sw = 1.0 if ch != tuned_channel else 0.0
+            tuned_channel = ch
+            detect = max(0.0, dwell - sw)
+            n_measure += 1
+            detect_s += detect
+            switch_s += sw
+            e["n_measure"] += 1
+            e["detect_s"] += detect
+            e["switch_s"] += sw
+        else:
+            n_clear += 1
+            e["n_clear"] += 1
+            if body.get("clear_result") == "success":
+                clear_ok += 1
+                clear_ok_s += dwell
+                e["clear_ok"] += 1
+            else:
+                clear_miss += 1
+                clear_miss_s += dwell
+                e["clear_miss"] += 1
+            e["clear_s"] += dwell
+    for e in per_channel.values():
+        e["total_s"] = e["travel_s"] + e["detect_s"] + e["switch_s"] + e["clear_s"]
+    return {
+        "travel_m": travel_m,
+        "travel_s": travel_m / speed_mps,
+        "detect_s": detect_s,
+        "switch_s": switch_s,
+        "clear_ok_s": clear_ok_s,
+        "clear_miss_s": clear_miss_s,
+        "n_measure": n_measure,
+        "n_clear": n_clear,
+        "clear_ok": clear_ok,
+        "clear_miss": clear_miss,
+        "per_channel": per_channel,
+    }
+
+
 class HuntPolicy:
-    def __init__(self, bot: RobotClient, directional: bool = False) -> None:
+    def __init__(
+        self,
+        bot: RobotClient,
+        directional: bool = False,
+        target_n: int | None = None,
+        *,
+        exit_reserve_s: float = DEFAULT_EXIT_RESERVE_S,
+        monotonic_clock: Callable[[], float] | None = None,
+        enable_step8_clear_ready_insertion: bool = False,
+        allow_q3_cover_enroute_clears: bool = False,
+        q4_dynamic_outer: bool = False,
+        q4_profile: str = "dynamic_pure",
+        q4_enter_omni: int | None = None,
+        q4_enter_dir: int | None = None,
+        q4_outer_mode: str | None = None,
+        q4_path_profile: str = "hexbatch",
+        q4_insert_delta_max_m: float = 400.0,
+        q3_path_profile: str = "batch",
+        use_dir_corrector: bool | None = None,
+    ) -> None:
+        if not math.isfinite(exit_reserve_s) or exit_reserve_s < 0.0:
+            raise ValueError("exit_reserve_s must be a finite non-negative number")
         self.bot = bot
         self.directional = directional
+        self.exit_reserve_s = float(exit_reserve_s)
+        self._clock = monotonic_clock or time.monotonic
+        # Step 8 is an opt-in Q3 candidate.  The runner keeps this disabled
+        # until a paired development/locked evaluation accepts the change.
+        self._step8_insertion_enabled = bool(
+            enable_step8_clear_ready_insertion and not directional
+        )
+        self._real_deadline_s: float | None = None
+        self._deadline_guard = False
+        self._action_failure = False
+        self._action_failure_detail: str | None = None
+        self._entered = False
+        self._route_completed = False
+        self._stopped_at_clear_limit = False
+        self._coverage_short_circuit = False
         self.book = ChannelBook()
-        self.waypoints = directional_waypoints() if directional else omni_waypoints()
+        self.q4_dynamic_outer = q4_dynamic_outer
+        self.q4_profile = q4_profile if q4_profile in ("v2", "dynamic_pure") else "v2"
+        self.q4_enter_omni = q4_enter_omni
+        self.q4_enter_dir = q4_enter_dir
+        self.q4_outer_mode = q4_outer_mode
+        self.q4_path_profile = (
+            q4_path_profile if q4_path_profile in ("v_nofar", "pathopt", "hexbatch") else "hexbatch"
+        )
+        self.q4_insert_delta_max_m = float(q4_insert_delta_max_m)
+        self.q3_path_profile = q3_path_profile if q3_path_profile in ("defer", "batch") else "batch"
+        self._pathopt = bool(directional and self.q4_path_profile == "pathopt")
+        self._q3_batch = bool(not directional and self.q3_path_profile == "batch")
+        self._q4_hexbatch = bool(directional and self.q4_path_profile == "hexbatch")
+        self._q3_cover_enroute_enabled = bool(
+            allow_q3_cover_enroute_clears and self._q3_batch
+        )
+        self._cover_phase = False
+        self._pathopt_rejoin: Point | None = None
+        self.q4_outer_r = Q4_OPT_OUTER_R if self._q4_hexbatch else Q4_OUTER_FULL_R
+        self.q4_outer_n = Q4_OPT_OUTER_N if self._q4_hexbatch else Q4_OUTER_FULL_N
+        self.waypoints = (
+            q4_opt_search_waypoints()
+            if self._q4_hexbatch
+            else (
+                directional_waypoints(outer_r=Q4_OUTER_FULL_R, outer_n=Q4_OUTER_FULL_N)
+                if directional
+                else (q3_waypoints() if self._q3_batch else omni_waypoints())
+            )
+        )
         self.stuck: set[int] = set()
+        self.creep_calls = 0
+        self.creep_steps = 0
+        self.creep_attempted: set[int] = set()
+        self.optical_grid_calls = 0
+        self.optical_grid_hits = 0
+        self.optical_grid_cells = 0
+        self.route_rechecks = 0
+        self.route_recheck_hits = 0
+        self.deferred_channels: set[int] = set()
+        self.dedicated_localizations = 0
+        self.localization_services = 0
+        self.first_seen_order: dict[int, int] = {}
+        self._tried_clear: set[tuple[int, int, int]] = set()
+        self._q3_deferred_cover_clears: dict[int, tuple[Point, str]] = {}
+        self._clear_miss_n: dict[int, int] = {}
+        self._uncharged_n: dict[int, int] = {}
+        self._behind_lobe_free: set[int] = set()
+        self._inner_done = False
+        self._cover_listens: list[Point] = []
+        self._target_n = MAX_TOTAL_CLEARED
+        self._move_context = "service"
+        self._move_segments: list[dict] = []
+        self._clear_audit: dict[str, dict[str, float]] = {}
+        self._step8_ready: dict[int, dict[str, object]] = {}
+        self._step8_rejected: set[int] = set()
+        self._step8_edges: list[tuple[int, Point, Point]] = []
+        self._step8_executed_edges: set[int] = set()
+        self._step8_edge_start = 0
+        self._step8_insertions: list[dict[str, object]] = []
+        self.q3_rh_steps = 0
+        self.q3_rh_replans = 0
+        self.q3_rh_switches = 0
+        self.q3_cover_enroute_clears = 0
+        self.q4_cover_enroute_clears = 0
+        self._q4_clear_queue: list[int] | None = None
+        self._use_dir_corrector = (
+            bool(use_dir_corrector)
+            if use_dir_corrector is not None
+            else bool(self._q4_hexbatch)
+        )
+        self.corrector_fallback = 0
+        self.corrector_used = 0
+        self._set_target_n(target_n)
+
+    def _set_target_n(self, n: int | None) -> None:
+        if isinstance(n, int) and 1 <= n <= MAX_TOTAL_CLEARED:
+            self._target_n = n
+
+    def _apply_target_n(self, body: dict | None) -> None:
+        if not body:
+            return
+        self._set_target_n(body.get("jammer_count"))
+        self._apply_q4_outer(body)
+
+    def _apply_q4_outer(self, body: dict) -> None:
+        """v_nofar keeps 12x2100. Dynamic outer is opt-in (run_q4_v2 only)."""
+        if not self.directional or not self.q4_dynamic_outer:
+            return
+        omni = body.get("omnidirectional_jammer_count")
+        dir_n = body.get("directional_jammer_count")
+        if not isinstance(omni, int) and isinstance(self.q4_enter_omni, int):
+            omni = self.q4_enter_omni
+        if not isinstance(dir_n, int) and isinstance(self.q4_enter_dir, int):
+            dir_n = self.q4_enter_dir
+        self.q4_outer_r, self.q4_outer_n = pick_q4_outer_ring(
+            omni if isinstance(omni, int) else None,
+            dir_n if isinstance(dir_n, int) else None,
+            jammer_count=body.get("jammer_count"),
+            pure=self.q4_profile == "dynamic_pure",
+        )
+        if self._q4_hexbatch:
+            self.waypoints = q4_opt_search_waypoints(
+                outer_r=self.q4_outer_r,
+                outer_n=self.q4_outer_n,
+            )
+            return
+        self.waypoints = directional_waypoints(
+            outer_r=self.q4_outer_r,
+            outer_n=self.q4_outer_n,
+        )
+
+    def _target_from_log(self) -> None:
+        for rec in reversed(self.bot.log):
+            if rec.get("path") != "/enter":
+                continue
+            self._apply_target_n(rec.get("response") or {})
+            return
+
+    def _arm_real_deadline(self, enter_body: dict) -> None:
+        remaining = enter_body.get("remaining_real_duration_s")
+        if isinstance(remaining, (int, float)) and math.isfinite(float(remaining)):
+            self._real_deadline_s = self._clock() + max(
+                0.0, float(remaining) - self.exit_reserve_s
+            )
+            return
+        self._real_deadline_s = None
+
+    def _allow_action(self) -> bool:
+        if self._deadline_guard or self._action_failure:
+            return False
+        if self._real_deadline_s is not None and self._clock() >= self._real_deadline_s:
+            self._deadline_guard = True
+            return False
+        return True
+
+    def _guard_tripped(self) -> bool:
+        return self._deadline_guard or self._action_failure
+
+    def _measure_action(self, xy: Point, ch: int) -> dict:
+        start = self.bot.position
+        for attempt in range(MAX_ACTION_ATTEMPTS):
+            if not self._allow_action():
+                return {"accepted": False, "q3_guarded": True}
+            try:
+                body = self.bot.measure(xy[0], xy[1], ch)
+            except Exception as exc:  # preserve a terminal reason for the caller
+                if attempt + 1 >= MAX_ACTION_ATTEMPTS:
+                    self._action_failure = True
+                    self._action_failure_detail = f"measure: {exc}"
+                    return {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                self._record_move("measure", start, xy, ch)
+                return body
+        self._action_failure = True
+        self._action_failure_detail = "measure returned accepted=false after retries"
+        return {"accepted": False, "q3_action_error": "measure rejected"}
+
+    def _clear_action(self, xy: Point, ch: int) -> dict:
+        start = self.bot.position
+        for attempt in range(MAX_ACTION_ATTEMPTS):
+            if not self._allow_action():
+                return {"accepted": False, "q3_guarded": True}
+            try:
+                body = self.bot.clear(xy[0], xy[1], ch)
+            except Exception as exc:  # preserve a terminal reason for the caller
+                if attempt + 1 >= MAX_ACTION_ATTEMPTS:
+                    self._action_failure = True
+                    self._action_failure_detail = f"clear: {exc}"
+                    return {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                self._record_move("clear", start, xy, ch)
+                return body
+        self._action_failure = True
+        self._action_failure_detail = "clear returned accepted=false after retries"
+        return {"accepted": False, "q3_action_error": "clear rejected"}
+
+    def _record_move(self, kind: str, start: Point, xy: Point, ch: int) -> None:
+        travel_s = dist(start, xy) / SPEED_MPS
+        self._move_segments.append(
+            {
+                "kind": kind,
+                "context": self._move_context,
+                "travel_s": travel_s,
+                "xy": xy,
+                "ch": ch,
+            }
+        )
+
+    def _move_decomposition(self) -> dict:
+        """Split travel into backbone-scan / planned-leg / rejoin / localization / clear.
+
+        Q3 operational definition: a move issued by a cover-tour scan action
+        at a backbone waypoint is backbone-scan travel; every other measure
+        move is localization travel; every clear move is clear detour.  For
+        the fixed-order omni tour the planned polyline legs are subtracted
+        from backbone-scan travel and the remainder (signed) is the rejoin
+        cost.  The directional branch keeps the raw buckets.
+        """
+        backbone_scan_s = sum(
+            s["travel_s"] for s in self._move_segments
+            if s["kind"] == "measure" and s["context"] == "backbone"
+        )
+        localization_s = sum(
+            s["travel_s"] for s in self._move_segments
+            if s["kind"] == "measure" and s["context"] == "service"
+        )
+        clear_detour_s = sum(s["travel_s"] for s in self._move_segments if s["kind"] == "clear")
+        planned_s = 0.0
+        visited: list[Point] = []
+        for s in self._move_segments:
+            if s["kind"] != "measure" or s["context"] != "backbone":
+                continue
+            xy = s["xy"]
+            if all(dist(xy, v) > 1e-6 for v in visited):
+                visited.append(xy)
+        planned_s = sum(
+            dist(visited[i - 1], visited[i]) for i in range(1, len(visited))
+        ) / SPEED_MPS
+        rejoin_s = backbone_scan_s - planned_s
+        total = backbone_scan_s + localization_s + clear_detour_s
+        return {
+            "backbone_scan_s": backbone_scan_s,
+            "backbone_planned_s": planned_s,
+            "backbone_rejoin_s": rejoin_s,
+            "localization_s": localization_s,
+            "clear_detour_s": clear_detour_s,
+            "total_s": total,
+        }
+
+    def _exit_with_retry(self) -> dict:
+        last: dict = {"accepted": False}
+        for _ in range(MAX_ACTION_ATTEMPTS):
+            try:
+                body = self.bot.exit()
+            except Exception as exc:
+                last = {"accepted": False, "q3_action_error": str(exc)}
+                continue
+            if _accepted(body):
+                return body
+            last = body
+        return last
 
     def run(self, do_enter: bool = True) -> dict:
         if do_enter:
             ent = self.bot.enter()
             if not _accepted(ent):
                 raise RuntimeError(f"enter failed: {ent}")
-        self._scan_point(self.waypoints[0], list(range(1, 21)))
-        self._drain_pending()
-        for wp in self.waypoints[1:]:
-            if len(self.book.cleared) >= MAX_TOTAL_CLEARED:
-                break
-            if not self.book.unknown_channels():
-                break
-            self._scan_point(wp, self.book.unknown_channels())
-            self._drain_pending()
-        if self.book.pending():
+            self._entered = True
+            self._arm_real_deadline(ent)
+            self._apply_target_n(ent)
+        else:
+            self._entered = True
+            remaining = getattr(self.bot, "remaining_real_duration_s", None)
+            if isinstance(remaining, (int, float)) and math.isfinite(float(remaining)):
+                self._arm_real_deadline({"remaining_real_duration_s": remaining})
+            self._target_from_log()
+        if not self._guard_tripped():
+            if self.directional:
+                if self._pathopt:
+                    self._run_stagger_search_cover()
+                elif self._q4_hexbatch:
+                    self._run_q4_hexagon_search_cover()
+                else:
+                    self._run_directional_cover()
+            else:
+                if self._q3_batch:
+                    self._run_omni_q3_search_cover()
+                else:
+                    self._run_omni_q3_cover()
+        if not self._guard_tripped() and self.book.pending():
             self.stuck.clear()
-            for ch in list(self.book.pending()):
-                self._home_and_clear(ch)
-        self.bot.exit()
+            if self._q3_batch or self._q4_hexbatch:
+                self._batch_clear_by_path()
+                if self._q4_hexbatch:
+                    leftover = set(self.book.pending())
+                    self.stuck.clear()
+                    for ch in leftover:
+                        self._clear_miss_n[ch] = 0
+                    self._tried_clear = {key for key in self._tried_clear if key[0] not in leftover}
+                    for ch in list(self.book.pending()):
+                        if self._guard_tripped():
+                            break
+                        self._home_and_clear(ch)
+            else:
+                for ch in list(self.book.pending()):
+                    if self._guard_tripped():
+                        break
+                    self._home_and_clear(ch)
+        pending_at_exit = len(self.book.pending())
+        try:
+            exit_body = self._exit_with_retry() if self._entered else {"accepted": False}
+        except Exception as exc:
+            exit_body = {"accepted": False, "q3_action_error": str(exc)}
         n_clear = len(self.book.cleared)
         vt = self.bot.virtual_time_s
         avg = vt / n_clear if n_clear else float("inf")
+        extra = action_stats(self.bot.log)
+        move_decomposition = self._move_decomposition()
+        q4_inner_n = q4_inner_r = None
+        if self.directional:
+            _origin, inner_wps, _outer = covering_phases(self.waypoints)
+            q4_inner_n = len(inner_wps)
+            if inner_wps:
+                q4_inner_r = dist(inner_wps[0], (0.0, 0.0))
+        if self._deadline_guard:
+            termination_reason = "deadline_guard"
+        elif self._action_failure:
+            termination_reason = "action_failure"
+        elif self._stopped_at_clear_limit:
+            termination_reason = "cleared_max_16"
+        elif self._route_completed and pending_at_exit == 0:
+            termination_reason = "coverage_complete"
+        elif self._coverage_short_circuit:
+            termination_reason = "coverage_short_circuit"
+        elif self._route_completed:
+            termination_reason = "route_completed_with_pending"
+        elif self._done() or not self.book.unknown_channels():
+            termination_reason = "coverage_complete"
+        else:
+            termination_reason = "incomplete"
+        exit_accepted = _accepted(exit_body)
+        completed = (
+            pending_at_exit == 0
+            and exit_accepted
+            and not self._guard_tripped()
+        )
         return {
             "cleared": n_clear,
             "virtual_time_s": vt,
             "avg_clear_s": avg,
             "channels": sorted(self.book.cleared),
+            "creep_calls": self.creep_calls,
+            "creep_steps": self.creep_steps,
+            "optical_grid_calls": self.optical_grid_calls,
+            "optical_grid_hits": self.optical_grid_hits,
+            "optical_grid_cells": self.optical_grid_cells,
+            "route_rechecks": self.route_rechecks,
+            "route_recheck_hits": self.route_recheck_hits,
+            "deferred_channels": len(self.deferred_channels),
+            "dedicated_localizations": self.dedicated_localizations,
+            "localization_services": self.localization_services,
+            "q4_outer_r": self.q4_outer_r if self.directional else None,
+            "q4_outer_n": self.q4_outer_n if self.directional else None,
+            "q4_path_profile": self.q4_path_profile if self.directional else None,
+            "q3_path_profile": None if self.directional else self.q3_path_profile,
+            "q3_ring_n": None if self.directional else max(0, len(self.waypoints) - 1),
+            "q3_ring_r": (
+                None
+                if self.directional or len(self.waypoints) < 2
+                else dist(self.waypoints[1], (0.0, 0.0))
+            ),
+            "q4_inner_n": q4_inner_n,
+            "q4_inner_r": q4_inner_r,
+            "q3_rh_steps": self.q3_rh_steps if self._q3_batch else 0,
+            "q3_rh_replans": self.q3_rh_replans if self._q3_batch else 0,
+            "q3_rh_switches": self.q3_rh_switches if self._q3_batch else 0,
+            "q3_cover_enroute_clears": (
+                self.q3_cover_enroute_clears if self._q3_batch else 0
+            ),
+            "q3_cover_enroute_enabled": self._q3_cover_enroute_enabled,
+            "q4_cover_enroute_clears": (
+                self.q4_cover_enroute_clears if self._q4_hexbatch else 0
+            ),
+            "q4_rh_steps": self.q3_rh_steps if self._q4_hexbatch else 0,
+            "q4_rh_replans": self.q3_rh_replans if self._q4_hexbatch else 0,
+            "q4_rh_switches": self.q3_rh_switches if self._q4_hexbatch else 0,
+            "dir_corrector": self._use_dir_corrector,
+            "corrector_fallback": self.corrector_fallback if self._use_dir_corrector else 0,
+            "corrector_used": self.corrector_used if self._use_dir_corrector else 0,
+            "pending_at_exit": pending_at_exit,
+            "exit_accepted": exit_accepted,
+            "termination_reason": termination_reason,
+            "completed": completed,
+            "route_completed": self._route_completed,
+            "stopped_at_clear_limit": self._stopped_at_clear_limit,
+            "deadline_guard": self._deadline_guard,
+            "action_failure": self._action_failure,
+            "action_failure_detail": self._action_failure_detail,
+            "unknown_channels_at_exit": self.book.unknown_channels(),
+            "move_decomposition": move_decomposition,
+            "clear_audit": self._clear_audit,
+            "step8_insertion_enabled": self._step8_insertion_enabled,
+            "step8_insertions": list(self._step8_insertions),
+            "step8_pending_ready": sorted(self._step8_ready),
+            **extra,
         }
+
+    def _run_directional_cover(self) -> None:
+        """Q4: origin → inner NN → outer NN (with enroute / redundancy skips)."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        self._cover_phase = True
+        self._pathopt_rejoin = inner[0] if inner else (outer[0] if outer else None)
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        self._drain_pending()
+        self._cover_tour(inner)
+        self._inner_done = True
+        self._cover_tour(outer)
+        self._cover_phase = False
+        self._pathopt_rejoin = None
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _run_stagger_search_cover(self) -> None:
+        """Q4 pathopt: interleaved inner/outer listens; clear as soon as heard."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        rest = sector_fused_order([*inner, *outer])
+        self._cover_phase = True
+        self._inner_done = False
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        self._drain_pending()
+        for wp in rest:
+            if self._done() or self._search_complete() or self._guard_tripped():
+                break
+            leftover = [p for p in rest if dist(p, wp) > 1e-6]
+            self._pathopt_rejoin = (
+                min(leftover, key=lambda p: dist(wp, p)) if leftover else None
+            )
+            self._visit_cover_wp(wp)
+            self._refresh_stagger_inner_done(inner)
+        self._cover_phase = False
+        self._inner_done = True
+        self._pathopt_rejoin = None
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _heard_count(self) -> int:
+        return len(self.book.cleared) + len(self.book.pending())
+
+    def _hexbatch_cover_channels(self, wp: Point) -> list[int]:
+        """Discover unknown sources until n is heard, then only on-route second looks."""
+        opportunistic = self._opportunistic_channels(wp)
+        channels: list[int] = []
+        if self._heard_count() < self._target_n:
+            unknown = self.book.unknown_channels()
+            filtered = self._channels_for(wp, unknown)
+            # Outer vertices can sit just outside a conservative omni disk while
+            # still covering a front lobe; keep the certified outer listen.
+            use = filtered if (filtered or not self._inner_done) else list(unknown)
+            for ch in use:
+                if ch not in channels:
+                    channels.append(ch)
+        for ch in opportunistic:
+            if ch not in channels:
+                channels.append(ch)
+        return channels
+
+    def _hexbatch_visit_cover_wp(self, wp: Point) -> None:
+        channels = self._hexbatch_cover_channels(wp)
+        if not channels:
+            return
+        opportunistic = self._opportunistic_channels(wp)
+        before_counts = {
+            ch: len(self.book.detections.get(ch, [])) for ch in opportunistic
+        }
+        self.route_rechecks += len(opportunistic)
+        self._scan_point(wp, channels)
+        self._cover_listens.append(wp)
+        self.route_recheck_hits += sum(
+            ch in self.book.cleared
+            or len(self.book.detections.get(ch, [])) > before_counts[ch]
+            for ch in opportunistic
+        )
+
+    def _run_q4_hexagon_search_cover(self) -> None:
+        """Q4 hexbatch: finish certified listens for discovery + Q3-style on-route fixes."""
+        origin, inner, outer = covering_phases(self.waypoints)
+        self._cover_phase = True
+        self._inner_done = False
+        self._scan_point(origin, list(range(1, 21)))
+        self._cover_listens.append(origin)
+        nxt_after_origin = inner[0] if inner else (outer[0] if outer else None)
+        self._cover_enroute_clears(nxt_after_origin)
+        for index, wp in enumerate(inner):
+            if self._done() or self._guard_tripped():
+                break
+            self._listen_enroute(wp)
+            if self._done() or self._guard_tripped():
+                break
+            self._cover_enroute_clears(wp)
+            self._hexbatch_visit_cover_wp(wp)
+            nxt = inner[index + 1] if index + 1 < len(inner) else (outer[0] if outer else None)
+            self._cover_enroute_clears(nxt)
+        self._inner_done = True
+        pending_outer = list(outer)
+        while pending_outer and not self._done() and not self._guard_tripped():
+            wp = min(pending_outer, key=lambda p: dist(self.bot.position, p))
+            pending_outer = [p for p in pending_outer if dist(p, wp) > 1e-6]
+            # Front-lobe cover does not inherit same-ring omni disks; never skip
+            # a certified outer vertex that still has discovery or a second look.
+            self._hexbatch_visit_cover_wp(wp)
+            nxt = (
+                min(pending_outer, key=lambda p: dist(self.bot.position, p))
+                if pending_outer
+                else None
+            )
+            self._cover_enroute_clears(nxt)
+        self._cover_phase = False
+        self._inner_done = True
+        if not self._guard_tripped() and not self._done():
+            self._route_completed = True
+
+    def _refresh_stagger_inner_done(self, inner: list[Point]) -> None:
+        if not inner:
+            self._inner_done = True
+            return
+        unknown = self.book.unknown_channels()
+        self._inner_done = all(
+            any(dist(p, q) <= 8.0 for q in self._cover_listens) or not self._waypoint_useful(p, unknown)
+            for p in inner
+        )
+
+    def _run_omni_q3_search_cover(self) -> None:
+        """Finish the certified Q3 cover before servicing any located source."""
+        self._cover_phase = True
+        ring = self.waypoints[1:]
+        self._scan_point(self.waypoints[0], list(range(1, 21)))
+        self._cover_listens.append(self.waypoints[0])
+        self._cover_enroute_clears(ring[0] if ring else None)
+        prev = self.waypoints[0]
+        for index, wp in enumerate(ring):
+            if self._done() or self._guard_tripped():
+                break
+            unknown = self.book.unknown_channels()
+            opportunistic = self._opportunistic_channels(wp)
+            channels = []
+            for ch in self._channels_for(wp, unknown) + opportunistic:
+                if ch not in channels:
+                    channels.append(ch)
+            if not channels:
+                self._cover_enroute_clears(ring[index + 1] if index + 1 < len(ring) else None)
+                continue
+            self._cover_edge_second_looks(prev, wp, ring[index:])
+            self.route_rechecks += len(opportunistic)
+            before_counts = {
+                ch: len(self.book.detections.get(ch, [])) for ch in opportunistic
+            }
+            self._scan_point(wp, channels)
+            self._cover_listens.append(wp)
+            self.route_recheck_hits += sum(
+                ch in self.book.cleared
+                or len(self.book.detections.get(ch, [])) > before_counts[ch]
+                for ch in opportunistic
+            )
+            nxt = ring[index + 1] if index + 1 < len(ring) else None
+            self._cover_enroute_clears(nxt)
+            prev = wp
+        self._cover_phase = False
+        if not self._guard_tripped():
+            self._route_completed = True
+        self._service_q3_deferred_cover_clears()
+
+    def _service_q3_deferred_cover_clears(self) -> None:
+        """Execute Q3 near-point clears only after the full cover tour finishes."""
+        if not self._q3_batch or self._cover_phase:
+            return
+        queued = list(self._q3_deferred_cover_clears.items())
+        self._q3_deferred_cover_clears.clear()
+        for ch, (point, source) in queued:
+            if self._guard_tripped() or self._done():
+                break
+            if ch not in self.book.cleared:
+                self._try_clear(point, ch, charge=False, source=source)
+
+    def _cover_edge_second_looks(
+        self, start: Point, dest: Point, future_wps: list[Point]
+    ) -> None:
+        """Listen on start→dest when that segment is a legal second station."""
+        if (
+            not Q3_COVER_EDGE_SECOND
+            or not self._q3_batch
+            or self._guard_tripped()
+            or self._done()
+        ):
+            return
+        samples = [_lerp(start, dest, t) for t in Q3_COVER_EDGE_TS]
+        groups: dict[tuple[int, int], list[int]] = {}
+        points: dict[tuple[int, int], Point] = {}
+        for ch in self.book.pending():
+            if ch in self.stuck or self._done() or self._guard_tripped():
+                continue
+            obs = self.book.detections.get(ch, [])
+            if len(obs) != 1:
+                continue
+            if self._has_future_route_probe(ch, future_wps):
+                continue
+            s1, th = obs[0].xy, obs[0].svd_deg
+            chosen: Point | None = None
+            best_off = -1.0
+            for p in samples:
+                if not in_candidate_region(s1, th, p):
+                    continue
+                off = abs(cross(sub(p, s1), unit(th)))
+                if off > best_off:
+                    best_off = off
+                    chosen = p
+            if chosen is None:
+                continue
+            key = (int(round(chosen[0])), int(round(chosen[1])))
+            groups.setdefault(key, []).append(ch)
+            points[key] = chosen
+        ordered = sorted(groups, key=lambda k: (dist(self.bot.position, points[k]), k))
+        for key in ordered:
+            if self._done() or self._guard_tripped():
+                break
+            chs = [c for c in groups[key] if c not in self.book.cleared]
+            if not chs:
+                continue
+            self.route_rechecks += len(chs)
+            before = {c: len(self.book.detections.get(c, [])) for c in chs}
+            self._scan_point(points[key], chs)
+            self._cover_listens.append(points[key])
+            self.route_recheck_hits += sum(
+                c in self.book.cleared or len(self.book.detections.get(c, [])) > before[c]
+                for c in chs
+            )
+            self._cover_enroute_clears(dest)
+
+    def _cover_enroute_points(self, ch: int) -> list[tuple[str, Point]]:
+        """Clear candidates after ≥2 looks: SEC first, then bearing intersections."""
+        obs = self.book.detections.get(ch, [])
+        if len(obs) < 2:
+            return []
+        used = _diverse_obs(obs, 4)
+        quality = self._channel_locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+        )
+        if quality.near_collinear:
+            return []
+        if self._q4_hexbatch:
+            if quality.can_clear_20 and quality.sec_center is not None:
+                return [("sec_center", quality.sec_center)]
+            return []
+        out: list[tuple[str, Point]] = []
+        if quality.sec_center is not None:
+            src = "sec_center" if quality.can_clear_20 else "bearing"
+            out.append((src, quality.sec_center))
+        for q in _best_fixes(obs):
+            if all(dist(q, p) > 8.0 for _, p in out):
+                out.append(("bearing", q))
+        return out
+
+    def _cover_enroute_clears(self, next_wp: Point | None) -> None:
+        """Clear a source now iff going there barely lengthens the path to next_wp."""
+        q4_on = bool(self._q4_hexbatch and self._cover_phase)
+        q3_on = self._q3_cover_enroute_enabled
+        if (not q4_on and not q3_on) or self._guard_tripped() or self._done():
+            return
+        extra_lim = Q4_COVER_ENROUTE_EXTRA_M if q4_on else Q3_COVER_ENROUTE_EXTRA_M
+        tried: set[int] = set()
+        while not self._done() and not self._guard_tripped():
+            pos = self.bot.position
+            candidates: list[tuple[float, float, int, str, Point]] = []
+            for ch in self.book.pending():
+                if ch in self.stuck or ch in tried:
+                    continue
+                for source, point in self._cover_enroute_points(ch):
+                    go = dist(pos, point)
+                    if next_wp is None:
+                        extra = go
+                    else:
+                        extra = go + dist(point, next_wp) - dist(pos, next_wp)
+                    if extra > extra_lim:
+                        continue
+                    candidates.append((extra, go, ch, source, point))
+            if not candidates:
+                break
+            _extra, _go, ch, source, point = min(
+                candidates, key=lambda item: (item[0], item[1], item[2])
+            )
+            tried.add(ch)
+            if self._try_clear(point, ch, charge=False, source=source):
+                if q4_on:
+                    self.q4_cover_enroute_clears += 1
+                else:
+                    self.q3_cover_enroute_clears += 1
+
+    def _batch_clear_by_path(self) -> None:
+        """Receding-horizon open TSP: one move, then replan from the new pose."""
+        if self._q4_hexbatch:
+            self._batch_clear_locked_tsp()
+            return
+        sticky: int | None = None
+        idle = 0
+        for _ in range(Q3_RH_MAX_ITERS):
+            if (
+                not self.book.pending()
+                or self._done()
+                or self._guard_tripped()
+            ):
+                break
+            ready = [c for c in self.book.pending() if c not in self.stuck]
+            if not ready:
+                break
+            self.q3_rh_replans += 1
+            opp = self._rh_standstill_opportunity()
+            if opp is not None:
+                ch = opp
+                if sticky is not None and sticky != ch:
+                    self.q3_rh_switches += 1
+                sticky = None
+            else:
+                ch = self._rh_pick_channel(sticky)
+                if ch is None:
+                    break
+                if sticky is not None and sticky != ch:
+                    self.q3_rh_switches += 1
+                sticky = ch
+            before_pos = self.bot.position
+            before_n = len(self.book.detections.get(ch, []))
+            before_cleared = ch in self.book.cleared
+            self.localization_services += 1
+            if before_n == 1:
+                self.dedicated_localizations += 1
+            self._rh_service_step(ch)
+            self.q3_rh_steps += 1
+            if ch in self.book.cleared:
+                sticky = None
+                idle = 0
+                continue
+            moved = dist(self.bot.position, before_pos) > 1.0
+            new_obs = len(self.book.detections.get(ch, [])) > before_n
+            if moved or new_obs or (ch in self.book.cleared) != before_cleared:
+                idle = 0
+            else:
+                idle += 1
+                self.stuck.add(ch)
+                sticky = None
+            if idle > max(3, len(ready)):
+                break
+
+    def _batch_clear_locked_tsp(self) -> None:
+        """Clear along a locked no-skip open TSP of estimated source positions."""
+        self._q4_clear_queue = None
+        idle = 0
+        for _ in range(Q3_RH_MAX_ITERS):
+            if not self.book.pending() or self._done() or self._guard_tripped():
+                break
+            pts = self._rh_ready_points()
+            if not pts:
+                break
+            self.q3_rh_replans += 1
+            pos = self.bot.position
+            queue = [c for c in (self._q4_clear_queue or []) if c in pts]
+            local_left = any(dist(pos, pts[c]) <= Q4_CLEAR_LOCAL_M for c in pts)
+            planned_far = bool(queue) and dist(pos, pts[queue[0]]) > Q4_CLEAR_LOCAL_M + 1e-9
+            if not queue or (local_left and planned_far):
+                queue = no_skip_open_path_channel_order(pos, pts, local_m=Q4_CLEAR_LOCAL_M)
+            nearest = min(pts, key=lambda c: (dist(pos, pts[c]), c))
+            if dist(pos, pts[nearest]) + 80.0 < dist(pos, pts[queue[0]]):
+                queue = no_skip_open_path_channel_order(pos, pts, local_m=Q4_CLEAR_LOCAL_M)
+            ch = queue[0]
+            self._q4_clear_queue = queue
+            before_pos = self.bot.position
+            before_n = len(self.book.detections.get(ch, []))
+            before_cleared = ch in self.book.cleared
+            self.localization_services += 1
+            if before_n == 1:
+                self.dedicated_localizations += 1
+            self._rh_service_step(ch)
+            self.q3_rh_steps += 1
+            self._q4_clear_queue = [c for c in queue if c != ch]
+            if ch in self.book.cleared:
+                idle = 0
+                continue
+            moved = dist(self.bot.position, before_pos) > 1.0
+            new_obs = len(self.book.detections.get(ch, [])) > before_n
+            if moved or new_obs or (ch in self.book.cleared) != before_cleared:
+                idle = 0
+            else:
+                idle += 1
+            self.stuck.add(ch)
+            if idle > max(3, len(pts)):
+                break
+
+    def _rh_ready_points(self) -> dict[int, Point]:
+        return {
+            ch: self._estimated_service_point(ch)
+            for ch in self.book.pending()
+            if ch not in self.stuck
+        }
+
+    def _rh_pick_channel(self, sticky: int | None) -> int | None:
+        """First city of the current-position open TSP, with switch hysteresis."""
+        pts = self._rh_ready_points()
+        if not pts:
+            return None
+        start = self.bot.position
+        if self._q4_hexbatch:
+            order = no_skip_open_path_channel_order(start, pts, local_m=Q4_CLEAR_LOCAL_M)
+        else:
+            order = open_path_channel_order(start, pts)
+        if not order:
+            return None
+        ch = order[0]
+        if sticky is None or sticky not in pts or sticky == ch:
+            return ch
+        rest = {c: pts[c] for c in pts if c != sticky}
+        tail = open_path_channel_order(pts[sticky], rest) if rest else []
+        keep_cost = dist(start, pts[sticky]) + open_path_cost(
+            pts[sticky], [pts[c] for c in tail]
+        )
+        tsp_cost = open_path_cost(start, [pts[c] for c in order])
+        if keep_cost <= tsp_cost + Q3_RH_SWITCH_MARGIN_M:
+            return sticky
+        return ch
+
+    def _rh_standstill_opportunity(self) -> int | None:
+        """Service a source that is already at the current pose before traveling."""
+        pos = self.bot.position
+        ready = [c for c in self.book.pending() if c not in self.stuck]
+        in_range: list[tuple[float, int]] = []
+        for ch in ready:
+            obs = self.book.detections.get(ch, [])
+            if len(obs) < 2:
+                continue
+            est = self._estimated_service_point(ch)
+            gap = dist(pos, est)
+            if gap <= CLEAR_R:
+                in_range.append((gap, ch))
+        if in_range:
+            return min(in_range)[1]
+        # Q3 uses the farthest in-region 1-obs source for a wide baseline.
+        # Q4 only takes that if the second look is already at the current pose.
+        if self._q4_hexbatch:
+            here: list[tuple[float, int]] = []
+            for ch in ready:
+                obs = self.book.detections.get(ch, [])
+                if len(obs) != 1:
+                    continue
+                if self._eligible_route_probe(ch, pos):
+                    here.append((dist(pos, obs[0].xy), ch))
+            if here:
+                return max(here)[1]
+            return None
+        seconds: list[tuple[float, int]] = []
+        for ch in ready:
+            obs = self.book.detections.get(ch, [])
+            if len(obs) != 1:
+                continue
+            det = obs[0]
+            if in_candidate_region(det.xy, det.svd_deg, pos) and dist(pos, det.xy) > 8.0:
+                seconds.append((dist(pos, det.xy), ch))
+        if seconds:
+            return max(seconds)[1]
+        return None
+
+    @staticmethod
+    def _rh_step_len(gap: float, n_obs: int = 1) -> float:
+        if Q3_RH_DIRECT_MULTI_OBS and n_obs >= 2:
+            return gap
+        if gap <= Q3_RH_STEP_M:
+            return gap
+        return min(Q3_RH_STEP_M, max(120.0, 0.5 * gap))
+
+    def _rh_service_step(self, ch: int) -> None:
+        """One protocol action toward the current estimated service point of ``ch``."""
+        if self._guard_tripped() or ch in self.book.cleared:
+            return
+        obs = self.book.detections.get(ch, [])
+        if not obs:
+            return
+        if self._q4_hexbatch:
+            self._rh_hexbatch_service_step(ch)
+            return
+        pos = self.bot.position
+        dest = self._estimated_service_point(ch)
+        gap = dist(pos, dest)
+        step = self._rh_step_len(gap, len(obs))
+        if len(obs) == 1:
+            target = dest if gap <= step + 1e-6 else _lerp(pos, dest, step / max(gap, 1e-9))
+            self._measure_obs(ch, target, obs)
+            if ch in self.book.cleared:
+                return
+            if dist(self.bot.position, dest) <= 8.0:
+                self._try_clear(self.bot.position, ch, source="second_station")
+            return
+        used = _diverse_obs(obs, 4)
+        quality = locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+            delta_deg=self._aoa_delta_deg(),
+        )
+        if quality.can_clear_20 and quality.sec_center is not None:
+            if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
+                return
+            last = obs[-1]
+            along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+            if self._try_clear(along, ch, charge=False, source="sec_along"):
+                return
+            # SEC said clearable but /clear missed: take another bearing, do not raster.
+        elif not quality.near_collinear:
+            if self._try_bearing_clears(ch, obs):
+                return
+        # Large / biased region → one more measure. Grid is a single last-cell only.
+        if (
+            quality.sec_radius <= OPTICAL_GRID_MAX_SEC_R
+            and quality.sec_center is not None
+            and self._optical_grid_clear(ch)
+        ):
+            return
+        if gap > step + 1e-6:
+            target = _lerp(pos, dest, step / gap)
+            self._measure_obs(ch, target, obs)
+            return
+        if self._measure_obs(ch, dest, obs):
+            return
+        if self._try_clear(dest, ch, source="measure_fallback"):
+            return
+        last = obs[-1]
+        if self._optical_grid_clear(ch):
+            return
+        self._creep_clear(ch, last.xy, last.svd_deg)
+
+    def _hexbatch_second_station(self, s1: Point, th: float, ch: int | None = None) -> Point | None:
+        """Nearest front-lobe compact second station, else along-bearing proxy."""
+        now = self.bot.position
+        silence = self.book.silent_at.get(ch) if ch is not None else None
+        region_vertices = None
+        if self._use_dir_corrector:
+            env = heard_region([s1], [th], delta_deg=self._aoa_delta_deg())
+            if not env.empty and env.vertices:
+                region_vertices = env.vertices
+            picked = next_station_dir(
+                s1,
+                th,
+                now=now,
+                region_vertices=region_vertices,
+                silence=silence,
+            )
+            if picked is not None:
+                return picked
+            return self._along_bearing_proxy(s1, th)
+        compact = list(recommend_second_sides_compact(s1, th))
+        compact.sort(key=lambda p: dist(p, now))
+        for p in compact:
+            if dist(p, s1) <= 5.0:
+                continue
+            if not front_compatible(s1, th, p):
+                continue
+            if silence and any(dist(p, q) < 35.0 for q in silence):
+                continue
+            return p
+        extra = next_stations(
+            s1,
+            th,
+            now=now,
+            directional=True,
+            silence=silence,
+        )
+        for p in extra:
+            if dist(p, s1) > 5.0:
+                return p
+        return self._along_bearing_proxy(s1, th)
+
+    def _rh_hexbatch_service_step(self, ch: int) -> None:
+        """One Q3-style prefix action for a directional source, then replan."""
+        obs = self.book.detections.get(ch, [])
+        if not obs:
+            return
+        pos = self.bot.position
+        if len(obs) == 1:
+            s1, th = obs[0].xy, obs[0].svd_deg
+            dest = self._hexbatch_second_station(s1, th, ch) or self._estimated_service_point(ch)
+            gap = dist(pos, dest)
+            step = self._rh_step_len(gap)
+            if gap > step + 1e-6:
+                target = _lerp(pos, dest, step / gap)
+                self._measure_obs(ch, target, obs)
+                return
+            self._take_second_fix_hexbatch(ch, s1, th)
+            return
+        dest = self._estimated_service_point(ch)
+        gap = dist(pos, dest)
+        step = self._rh_step_len(gap)
+        used = _diverse_obs(obs, 4)
+        quality = self._channel_locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+        )
+        if quality.can_clear_20 and quality.sec_center is not None:
+            if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
+                return
+            last = obs[-1]
+            along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+            self._try_clear(along, ch, charge=False, source="sec_along")
+            return
+        if not quality.near_collinear and self._try_bearing_clears(ch, obs):
+            return
+        if self._optical_grid_clear(ch):
+            return
+        if gap > step + 1e-6:
+            target = _lerp(pos, dest, step / gap)
+            self._measure_obs(ch, target, obs)
+            return
+        if self._measure_obs(ch, dest, obs):
+            return
+        if self._try_clear(dest, ch, source="measure_fallback"):
+            return
+        last = obs[-1]
+        if self._optical_grid_clear(ch):
+            return
+        self._creep_clear(ch, last.xy, last.svd_deg)
+
+    def _run_omni_q3_cover(self) -> None:
+        """Q3 round3 tour: fixed 8×1200 ring + opportunistic second looks + deferred drain."""
+        self._step8_prepare_route(self.waypoints)
+        self._step8_set_edge_start(0)
+        self._scan_point(self.waypoints[0], list(range(1, 21)))
+        self._drain_pending(self.waypoints[1:])
+        for index, wp in enumerate(self.waypoints[1:], start=1):
+            if self._done():
+                self._stopped_at_clear_limit = True
+                break
+            edge_index = index - 1
+            inserted = False
+            if self._step8_insertion_enabled:
+                self._step8_set_edge_start(edge_index)
+                inserted = self._step8_service_before_edge(edge_index)
+            unknown = self.book.unknown_channels()
+            if not unknown and not self.book.pending() and not inserted:
+                self._coverage_short_circuit = True
+                break
+            opportunistic = self._opportunistic_channels(wp)
+            before_counts = {
+                ch: len(self.book.detections.get(ch, []))
+                for ch in opportunistic
+            }
+            channels = unknown + [ch for ch in opportunistic if ch not in unknown]
+            if channels:
+                self.route_rechecks += len(opportunistic)
+                self._scan_point(wp, channels)
+                self.route_recheck_hits += sum(
+                    ch in self.book.cleared
+                    or len(self.book.detections.get(ch, [])) > before_counts[ch]
+                    for ch in opportunistic
+                )
+            if self._step8_insertion_enabled:
+                # The waypoint remains part of the route even when an
+                # insertion was serviced immediately before this edge.
+                self._step8_mark_edge_executed(edge_index)
+                self._step8_set_edge_start(index)
+            if self._guard_tripped():
+                break
+            self._drain_pending(self.waypoints[index + 1 :])
+            if self._guard_tripped():
+                break
+        else:
+            self._route_completed = True
+        if self.book.pending():
+            self.stuck.clear()
+            self._drain_pending([])
+
+    def _done(self) -> bool:
+        return len(self.book.cleared) >= self._target_n
+
+    def _search_complete(self) -> bool:
+        """Stop covering once every live source is heard (n from /enter, else 16)."""
+        heard = len(self.book.cleared) + len(self.book.pending())
+        return heard >= self._target_n or not self.book.unknown_channels()
+
+    def _cover_tour(self, remaining: list[Point]) -> None:
+        """Visit remaining covering points by nearest neighbor; skip same-ring redundant disks."""
+        ring = list(remaining)
+        if not ring:
+            return
+        self._cover_nn(ring)
+
+    def _visit_cover_wp(self, wp: Point) -> None:
+        self._listen_enroute(wp)
+        if self._done() or self._search_complete():
+            return
+        unknown = self.book.unknown_channels()
+        if self._waypoint_useful(wp, unknown) and not self._redundant_cover(wp):
+            self._scan_point(wp, self._channels_for(wp, unknown))
+            self._cover_listens.append(wp)
+            self._drain_pending()
+
+    def _cover_nn(self, remaining: list[Point]) -> None:
+        pending = set(remaining)
+        ring = list(remaining)
+        while pending and not self._done() and not self._search_complete() and not self._guard_tripped():
+            unknown = self.book.unknown_channels()
+            useful = [
+                wp
+                for wp in ring
+                if wp in pending and self._waypoint_useful(wp, unknown) and not self._redundant_cover(wp)
+            ]
+            if not useful:
+                break
+            wp = min(useful, key=lambda p: dist(self.bot.position, p))
+            pending.remove(wp)
+            leftover = [p for p in useful if dist(p, wp) > 1e-6]
+            self._pathopt_rejoin = (
+                min(leftover, key=lambda p: dist(wp, p)) if leftover else None
+            )
+            self._visit_cover_wp(wp)
+
+    def _channels_for(self, xy: Point, channels: list[int]) -> list[int]:
+        assume = bool(self.directional and self._inner_done)
+        return [
+            ch
+            for ch in channels
+            if self.book.might_hear(ch, xy, directional=self.directional, assume_directional=assume)
+        ]
+
+    def _waypoint_useful(self, xy: Point, unknown: list[int]) -> bool:
+        assume = bool(self.directional and self._inner_done)
+        return any(
+            self.book.might_hear(ch, xy, directional=self.directional, assume_directional=assume)
+            for ch in unknown
+        )
+
+    def _redundant_cover(self, xy: Point) -> bool:
+        """Skip a listen that sits in another same-ring covering disk of radius min r_eff.
+
+        Inner (1200 m) must not suppress outer (~1900 m): radial gap is ~700 m < 1000 m,
+        but that disk overlap is isotropic and misses outward directional sources.
+        """
+        if not self._inner_done:
+            return False
+        r = dist(xy, (0.0, 0.0))
+        for p in self._cover_listens:
+            if abs(r - dist(p, (0.0, 0.0))) > 200.0:
+                continue
+            if dist(xy, p) <= R_RULE_OUT:
+                return True
+        return False
+
+    def _listen_enroute(self, dest: Point) -> None:
+        """Stop at 900 m on the origin→inner-ring ray so near-center outward sources are heard."""
+        origin = (0.0, 0.0)
+        rd = dist(dest, origin)
+        # v_nofar inner is 1200 m; hexbatch inner is ~997 m. Both need the 900 m
+        # stop for near-center outward directional sources when leaving the origin.
+        if rd <= ENROUTE_R + 40.0 or rd > INNER_R_MAX:
+            return
+        if dist(self.bot.position, origin) > 850.0:
+            return
+        u = (dest[0] / rd, dest[1] / rd)
+        mid = (ENROUTE_R * u[0], ENROUTE_R * u[1])
+        if dist(self.bot.position, mid) + dist(mid, dest) > dist(self.bot.position, dest) + 35.0:
+            return
+        unknown = self.book.unknown_channels()
+        chs = list(self._channels_for(mid, unknown))
+        if self._q4_hexbatch:
+            for ch in self._opportunistic_channels(mid):
+                if ch not in chs:
+                    chs.append(ch)
+        if not chs:
+            return
+        self._scan_point(mid, chs)
+        self._cover_listens.append(mid)
+        if not (self._q4_hexbatch and self._cover_phase):
+            self._drain_pending()
+
+    def _record_direction(self, ch: int, xy: Point, svd: float) -> None:
+        if ch not in self.book.detections:
+            self.first_seen_order.setdefault(ch, len(self.first_seen_order))
+        self.book.add_direction(ch, xy, svd)
 
     def _scan_point(self, xy: Point, channels: list[int]) -> None:
         x, y = xy
-        for ch in channels:
-            if ch in self.book.cleared:
-                continue
-            body = self.bot.measure(x, y, ch)
-            if not _accepted(body):
-                continue
-            self.book.record_scan(ch, xy)
-            kind = body.get("measure_result")
-            if kind == "near":
-                self._try_clear(xy, ch)
-            elif kind == "direction":
-                self.book.add_direction(ch, xy, float(body["svd_deg"]))
-                self.stuck.discard(ch)
+        prev_context = self._move_context
+        self._move_context = "backbone"
+        try:
+            for ch in channels:
+                if self._done() or self._guard_tripped():
+                    break
+                if (
+                    self.directional
+                    and not (self._q4_hexbatch and self._cover_phase)
+                    and self._search_complete()
+                ):
+                    break
+                if ch in self.book.cleared:
+                    continue
+                body = self._measure_action((x, y), ch)
+                if not _accepted(body):
+                    if self._guard_tripped():
+                        break
+                    continue
+                self.book.record_scan(ch, xy)
+                kind = body.get("measure_result")
+                if kind == "near":
+                    self._try_clear(xy, ch, source="scan_near")
+                elif kind == "direction":
+                    self._record_direction(ch, xy, float(body["svd_deg"]))
+                    self.stuck.discard(ch)
+                else:
+                    self.book.record_silence(ch, xy)
+        finally:
+            self._move_context = prev_context
 
-    def _try_clear(self, xy: Point, ch: int) -> bool:
-        body = self.bot.clear(xy[0], xy[1], ch)
-        if _accepted(body) and body.get("clear_result") == "success":
-            self.book.mark_cleared(ch)
-            return True
+    def _clear_budget_left(self, ch: int) -> int:
+        return MAX_CLEAR_MISS_PER_CH - self._clear_miss_n.get(ch, 0)
+
+    def _try_clear(
+        self,
+        xy: Point,
+        ch: int,
+        charge: bool = True,
+        behind_lobe: bool = False,
+        source: str = "unknown",
+    ) -> bool:
+        if self._q3_batch and self._cover_phase and not self._q3_cover_enroute_enabled:
+            self._q3_deferred_cover_clears.setdefault(ch, (xy, source))
+            return False
+        if charge and self._clear_budget_left(ch) <= 0:
+            return False
+        if not charge and behind_lobe:
+            used = self._uncharged_n.get(ch, 0)
+            first_free = ch not in self._behind_lobe_free
+            if used >= MAX_UNCHARGED_CLEAR_PER_CH and not first_free:
+                return False
+        key = (ch, int(round(xy[0])), int(round(xy[1])))
+        if key in self._tried_clear:
+            return False
+        self._tried_clear.add(key)
+        start = self.bot.position
+        body = self._clear_action(xy, ch)
+        accepted = _accepted(body)
+        if accepted:
+            ok = body.get("clear_result") == "success"
+            travel_s = dist(start, xy) / SPEED_MPS
+            audit = self._clear_audit.setdefault(
+                source,
+                {
+                    "attempts": 0,
+                    "success": 0,
+                    "miss": 0,
+                    "travel_s": 0.0,
+                    "miss_travel_s": 0.0,
+                },
+            )
+            audit["attempts"] += 1
+            audit["travel_s"] += travel_s
+            if ok:
+                audit["success"] += 1
+            else:
+                audit["miss"] += 1
+                audit["miss_travel_s"] += travel_s
+            if ok:
+                self.book.mark_cleared(ch)
+                return True
+        if charge:
+            self._clear_miss_n[ch] = self._clear_miss_n.get(ch, 0) + 1
+        elif behind_lobe:
+            if ch not in self._behind_lobe_free:
+                self._behind_lobe_free.add(ch)
+            else:
+                self._uncharged_n[ch] = self._uncharged_n.get(ch, 0) + 1
         return False
 
-    def _drain_pending(self) -> None:
+    def _drain_pending(self, future_waypoints: list[Point] | None = None) -> None:
+        future = [] if self.directional else list(future_waypoints or [])
         while True:
-            pending = [c for c in self.book.pending() if c not in self.stuck]
-            if not pending or len(self.book.cleared) >= MAX_TOTAL_CLEARED:
+            if self._guard_tripped():
                 break
-            ch = min(
-                pending,
-                key=lambda c: dist(self.bot.position, self.book.detections[c][-1].xy),
-            )
+            pending = [
+                c
+                for c in self.book.pending()
+                if c not in self.stuck and c not in self._step8_ready
+            ]
+            if not pending or len(self.book.cleared) >= self._target_n:
+                break
+            if (self._q3_batch or self._q4_hexbatch) and self._cover_phase:
+                break
+            if not self.directional:
+                ready: list[int] = []
+                for ch in pending:
+                    obs = self.book.detections.get(ch, [])
+                    if len(obs) == 1 and self._has_future_route_probe(ch, future):
+                        self.deferred_channels.add(ch)
+                        continue
+                    ready.append(ch)
+                if not ready:
+                    break
+                rejoin = future[0] if future else None
+                ch = min(
+                    ready,
+                    key=lambda c: (
+                        self._incremental_service_cost(c, rejoin),
+                        self.first_seen_order.get(c, c),
+                        c,
+                    ),
+                )
+                self.localization_services += 1
+                if len(self.book.detections.get(ch, [])) == 1:
+                    self.dedicated_localizations += 1
+            else:
+                ch = min(
+                    pending,
+                    key=lambda c: dist(self.bot.position, self.book.detections[c][-1].xy),
+                )
             self._localize_and_clear(ch)
             if ch not in self.book.cleared:
                 self.stuck.add(ch)
 
-    def _localize_and_clear(self, ch: int) -> None:
+    def _eligible_route_probe(self, ch: int, waypoint: Point) -> bool:
+        obs = self.book.detections.get(ch, [])
+        if len(obs) != 1:
+            return False
+        s1, th = obs[0].xy, obs[0].svd_deg
+        if not self.directional:
+            return in_candidate_region(s1, th, waypoint)
+        if not self._q4_hexbatch:
+            return False
+        gap = dist(s1, waypoint)
+        if gap < 80.0 or gap > 1600.0:
+            return False
+        _x, y = to_body(s1, th, waypoint)
+        if abs(y) < 200.0:
+            return False
+        return front_compatible(s1, th, waypoint)
+
+    def _has_future_route_probe(self, ch: int, future_waypoints: list[Point]) -> bool:
+        return any(self._eligible_route_probe(ch, wp) for wp in future_waypoints)
+
+    def _opportunistic_channels(self, waypoint: Point) -> list[int]:
+        return [
+            ch
+            for ch in self.book.pending()
+            if ch not in self.stuck and self._eligible_route_probe(ch, waypoint)
+        ]
+
+    @staticmethod
+    def _clip_arena_pt(p: Point) -> Point:
+        radius = dist(p, (0.0, 0.0))
+        if radius > Q3_ARENA_R:
+            return scale(p, (Q3_ARENA_R - 1e-6) / radius)
+        return p
+
+    def _along_bearing_proxy(self, s1: Point, theta_deg: float, rho: float | None = None) -> Point:
+        """Guess the source location on the first bearing (not a lateral second station)."""
+        if rho is None:
+            rho = Q4_CLEAR_PROXY_RHO if self._q4_hexbatch else 700.0
+        t_exit = ray_exit_t(s1, theta_deg, Q3_ARENA_R)
+        if t_exit > 1.0:
+            rho = min(rho, 0.55 * t_exit)
+        rho = max(120.0, rho)
+        return self._clip_arena_pt(from_body(s1, theta_deg, rho, 0.0))
+
+    def _estimated_service_point(self, ch: int) -> Point:
         obs = self.book.detections.get(ch, [])
         if not obs:
+            return self.bot.position
+        if len(obs) >= 2:
+            quality = self._channel_locate_quality(
+                [d.xy for d in obs],
+                [d.svd_deg for d in obs],
+                silence=self.book.silent_at.get(ch),
+            )
+            if quality.sec_center is not None:
+                cen = quality.sec_center
+                radius = dist(cen, (0.0, 0.0))
+                if radius > Q3_ARENA_R:
+                    return scale(cen, (Q3_ARENA_R - 1e-6) / radius)
+                return cen
+            region = intersect_feasible_region(
+                [item.xy for item in obs],
+                [item.svd_deg for item in obs],
+                angle_half_width_deg=self._aoa_delta_deg(),
+            )
+            if not region.empty and region.vertices:
+                center, _ = smallest_enclosing_circle(region.vertices)
+                radius = dist(center, (0.0, 0.0))
+                if radius > Q3_ARENA_R:
+                    return scale(center, (Q3_ARENA_R - 1e-6) / radius)
+                return center
+        if self._q4_hexbatch:
+            return self._along_bearing_proxy(obs[0].xy, obs[0].svd_deg)
+        stations = next_stations(
+            obs[0].xy,
+            obs[0].svd_deg,
+            now=self.bot.position,
+            directional=self.directional,
+            silence=self.book.silent_at.get(ch),
+        )
+        if stations:
+            return stations[0]
+        options = recommend_second_options(
+            obs[0].xy,
+            obs[0].svd_deg,
+            now=self.bot.position,
+        )
+        if options:
+            return options[0]
+        return obs[-1].xy
+
+    def _incremental_service_cost(self, ch: int, rejoin: Point | None) -> float:
+        service = self._estimated_service_point(ch)
+        cost = dist(self.bot.position, service)
+        if rejoin is not None:
+            cost += dist(service, rejoin) - dist(self.bot.position, rejoin)
+        return cost
+
+    def _step8_prepare_route(self, route: list[Point]) -> None:
+        if not self._step8_insertion_enabled:
             return
-        if self.directional:
-            last = obs[-1]
-            if self._creep_clear(ch, last.xy, last.svd_deg):
-                return
-        for _ in range(MAX_FIX_MEASURES):
+        self._step8_edges = [
+            (index, route[index], route[index + 1])
+            for index in range(max(0, len(route) - 1))
+        ]
+        self._step8_executed_edges.clear()
+        self._step8_edge_start = 0
+
+    def _step8_set_edge_start(self, index: int) -> None:
+        if not self._step8_insertion_enabled:
+            return
+        self._step8_edge_start = max(0, min(index, len(self._step8_edges)))
+
+    def _step8_mark_edge_executed(self, index: int) -> None:
+        if self._step8_insertion_enabled and index == self._step8_edge_start:
+            self._step8_executed_edges.add(index)
+
+    @staticmethod
+    def _step8_insert_delta(a: Point, c: Point, b: Point) -> float:
+        """Extra path length for inserting C between an unexecuted A→B edge."""
+        return dist(a, c) + dist(c, b) - dist(a, b)
+
+    def _step8_future_edges(self) -> list[tuple[int, Point, Point]]:
+        if not self._step8_insertion_enabled:
+            return []
+        return [
+            edge
+            for edge in self._step8_edges
+            if edge[0] >= self._step8_edge_start
+            and edge[0] not in self._step8_executed_edges
+        ]
+
+    def _step8_choose_insertion_edge(
+        self,
+        clear_point: Point,
+        future_edges: list[tuple[int, Point, Point]] | None = None,
+    ) -> tuple[int, float] | None:
+        """Choose the cheapest still-future backbone edge for clear point C."""
+        if not self._step8_insertion_enabled:
+            return None
+        edges = future_edges if future_edges is not None else self._step8_future_edges()
+        candidates = [
+            (self._step8_insert_delta(a, clear_point, b), index)
+            for index, a, b in edges
+            if index >= self._step8_edge_start
+            and index not in self._step8_executed_edges
+        ]
+        if not candidates:
+            return None
+        delta, index = min(candidates, key=lambda item: (item[0], item[1]))
+        return index, delta
+
+    def _step8_clear_ready_point(self, quality: object) -> Point | None:
+        if not self._step8_insertion_enabled:
+            return None
+        if not getattr(quality, "can_clear_20", False):
+            return None
+        point = getattr(quality, "sec_center", None)
+        if point is None:
+            return None
+        if not all(math.isfinite(float(value)) for value in point):
+            return None
+        if dist(point, (0.0, 0.0)) > Q3_ARENA_R + 1e-6:
+            return None
+        return point
+
+    def _step8_queue_clear_ready(self, ch: int, clear_point: Point) -> bool:
+        if (
+            not self._step8_insertion_enabled
+            or ch in self.book.cleared
+            or ch in self._step8_rejected
+            or ch in self._step8_ready
+        ):
+            return False
+        choice = self._step8_choose_insertion_edge(clear_point)
+        if choice is None:
+            return False
+        edge_index, delta = choice
+        self._step8_ready[ch] = {
+            "point": clear_point,
+            "edge_index": edge_index,
+            "delta_m": delta,
+        }
+        self.stuck.discard(ch)
+        return True
+
+    def _step8_service_before_edge(self, edge_index: int) -> bool:
+        if not self._step8_insertion_enabled:
+            return False
+        ready = sorted(
+            (
+                ch,
+                item,
+            )
+            for ch, item in self._step8_ready.items()
+            if item.get("edge_index") == edge_index
+        )
+        inserted = False
+        for ch, item in ready:
+            point = item["point"]
             if ch in self.book.cleared:
+                self._step8_ready.pop(ch, None)
+                continue
+            ok = self._try_clear(point, ch, charge=False, source="step8_insert")
+            if ok:
+                status = "success"
+                inserted = True
+            else:
+                # Do not lose a pending channel if a candidate point misses;
+                # release it to the existing baseline service path.
+                status = "fallback"
+                self._step8_rejected.add(ch)
+                self.stuck.discard(ch)
+                self._localize_and_clear(ch)
+            self._step8_ready.pop(ch, None)
+            self._step8_insertions.append(
+                {
+                    "channel": ch,
+                    "edge_index": edge_index,
+                    "point": point,
+                    "delta_m": item["delta_m"],
+                    "status": status,
+                }
+            )
+        return inserted
+
+    def _localize_and_clear(self, ch: int) -> None:
+        for _ in range(MAX_FIX_MEASURES):
+            if self._guard_tripped():
+                return
+            if ch in self.book.cleared:
+                return
+            if ch in self._step8_ready:
                 return
             obs = self.book.detections.get(ch, [])
             if not obs:
                 return
             if len(obs) == 1:
-                s1, th = obs[0].xy, obs[0].svd_deg
-                s2 = recommend_second(s1, th, now=self.bot.position)
-                if dist(s2, s1) > 5.0:
-                    self._measure_obs(ch, s2, obs)
+                self._take_second_fix(ch, obs[0].xy, obs[0].svd_deg)
                 if ch in self.book.cleared:
                     return
-                last = self.book.detections.get(ch, obs)[-1]
-                if self._creep_clear(ch, last.xy, last.svd_deg):
+                obs = self.book.detections.get(ch, [])
+                if not obs:
                     return
-                continue
-            stations = [d.xy for d in obs]
-            bearings = [d.svd_deg for d in obs]
-            region = intersect_cones(stations, bearings)
+                if len(obs) < 2:
+                    last = obs[-1]
+                    if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch):
+                        return
+                    self._creep_clear(ch, last.xy, last.svd_deg)
+                    return
+            obs = self.book.detections.get(ch, [])
+            used = _diverse_obs(obs, 4)
+            stations = [d.xy for d in used]
+            bearings = [d.svd_deg for d in used]
+            if not self.directional:
+                # Q3: Q1 locate_quality first; skip near-collinear ray clears.
+                quality = locate_quality(
+                    stations,
+                    bearings,
+                    silence=self.book.silent_at.get(ch),
+                    delta_deg=self._aoa_delta_deg(),
+                )
+                clear_ready = self._step8_clear_ready_point(quality)
+                if clear_ready is not None and self._step8_queue_clear_ready(ch, clear_ready):
+                    return
+                if quality.can_clear_20 and quality.sec_center is not None:
+                    if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
+                        return
+                    last = obs[-1]
+                    along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+                    if self._try_clear(along, ch, charge=False, source="sec_along"):
+                        return
+                if not quality.near_collinear and self._try_bearing_clears(ch, obs):
+                    return
+                region = (
+                    quality.region
+                    if not quality.region.empty
+                    else intersect_cones(
+                        stations, bearings, delta_deg=self._aoa_delta_deg()
+                    )
+                )
+            else:
+                quality = self._channel_locate_quality(
+                    stations,
+                    bearings,
+                    silence=self.book.silent_at.get(ch),
+                )
+                # Hexbatch: collinear along-ray looks must not fire far false intersections.
+                if not (self._q4_hexbatch and quality.near_collinear) and self._try_bearing_clears(ch, obs):
+                    return
+                if quality.can_clear_20 and quality.sec_center is not None:
+                    if self._try_clear(quality.sec_center, ch, charge=False, source="sec_center"):
+                        return
+                    last = obs[-1]
+                    along = add(quality.sec_center, scale(unit(last.svd_deg), 12.0))
+                    if self._try_clear(along, ch, charge=False, source="sec_along"):
+                        return
+                region = (
+                    quality.region
+                    if not quality.region.empty
+                    else intersect_cones(stations, bearings)
+                )
             if region.empty or not region.bounded or len(region.vertices) < 2:
                 last = obs[-1]
+                if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch):
+                    return
                 if self._creep_clear(ch, last.xy, last.svd_deg):
                     return
                 continue
             cen, rad = smallest_enclosing_circle(region.vertices)
-            if rad <= CLEAR_R and self._try_clear(cen, ch):
-                return
             if rad <= CLEAR_R:
-                for v in region.vertices:
-                    if self._try_clear(v, ch):
-                        return
-            nxt = _third_point(region.vertices, self.bot.position)
-            if not self._measure_obs(ch, nxt, obs):
+                if self._try_clear(cen, ch, charge=False, source="sec_center"):
+                    return
                 last = obs[-1]
-                self._creep_clear(ch, last.xy, last.svd_deg)
+                along = add(cen, scale(unit(last.svd_deg), 12.0))
+                if self._try_clear(along, ch, charge=False, source="sec_along"):
+                    return
+            if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch, list(region.vertices)):
                 return
-        obs = self.book.detections.get(ch, [])
-        if obs:
+            nxt = cen if dist(cen, self.bot.position) >= 8.0 else _third_point(region.vertices, self.bot.position)
+            if self._measure_obs(ch, nxt, obs):
+                continue
+            if self._try_clear(nxt, ch, source="measure_fallback"):
+                return
             last = obs[-1]
+            if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch, list(region.vertices)):
+                return
             self._creep_clear(ch, last.xy, last.svd_deg)
+            return
+        obs = self.book.detections.get(ch, [])
+        if obs and ch not in self.book.cleared:
+            last = obs[-1]
+            if (not self.directional or self._q4_hexbatch) and self._optical_grid_clear(ch):
+                return
+            if self._creep_clear(ch, last.xy, last.svd_deg):
+                return
+            self._fan_clear(ch, last.xy, last.svd_deg)
+
+    def _aoa_delta_deg(self) -> float:
+        """Q3 uses lecture ±1.01°; Q4 keeps legacy ±1.0°."""
+        return Q3_ANGLE_HALF_WIDTH_DEG if not self.directional else 1.0
+
+    def _channel_locate_quality(
+        self,
+        stations: list[Point],
+        bearings: list[float],
+        silence: list[Point] | None = None,
+    ):
+        """Q4 hexbatch uses the directional corrector; Q3 and other Q4 paths stay on Problem 1."""
+        base = locate_quality(
+            stations,
+            bearings,
+            silence=silence,
+            delta_deg=self._aoa_delta_deg(),
+        )
+        if not self._use_dir_corrector:
+            return base
+        corrected, fallback = locate_quality_dir(
+            stations,
+            bearings,
+            silence=silence,
+            delta_deg=self._aoa_delta_deg(),
+            baseline=base,
+        )
+        if fallback:
+            self.corrector_fallback += 1
+            return base
+        self.corrector_used += 1
+        return corrected
+
+    def _try_bearing_clears(self, ch: int, obs: list[Detection]) -> bool:
+        # One nearest intersection only — a second far fix is the star-shaped detour.
+        fixes = sorted(_best_fixes(obs), key=lambda q: dist(self.bot.position, q))
+        if not fixes:
+            return False
+        return self._try_clear(fixes[0], ch, charge=False, source="bearing")
+
+    def _channel_feasible_vertices(self, ch: int) -> list[Point]:
+        obs = self.book.detections.get(ch, [])
+        if len(obs) < 2:
+            return []
+        used = _diverse_obs(obs, 6)
+        quality = self._channel_locate_quality(
+            [d.xy for d in used],
+            [d.svd_deg for d in used],
+            silence=self.book.silent_at.get(ch),
+        )
+        region = (
+            quality.region
+            if not quality.region.empty
+            else intersect_cones(
+                [d.xy for d in used],
+                [d.svd_deg for d in used],
+                delta_deg=self._aoa_delta_deg(),
+            )
+        )
+        if region.empty or not region.bounded or len(region.vertices) < 2:
+            return []
+        return list(region.vertices)
+
+    def _optical_grid_clear(self, ch: int, verts: list[Point] | None = None) -> bool:
+        """25 m optical sweep: Q3 uses a small-SEC last cell; Q4 hexbatch sweeps the polygon."""
+        if ch in self.book.cleared:
+            return False
+        if self.directional and not self._q4_hexbatch:
+            return False
+        tight = not self._q4_hexbatch
+        obs = self.book.detections.get(ch, [])
+        if tight and len(obs) >= 2:
+            used = _diverse_obs(obs, 4)
+            quality = locate_quality(
+                [d.xy for d in used],
+                [d.svd_deg for d in used],
+                silence=self.book.silent_at.get(ch),
+                delta_deg=self._aoa_delta_deg(),
+            )
+            if quality.near_collinear or quality.sec_radius > OPTICAL_GRID_MAX_SEC_R:
+                return False
+        verts = verts if verts is not None else self._channel_feasible_vertices(ch)
+        if len(verts) < 2:
+            return False
+        if tight:
+            xs = [v[0] for v in verts]
+            ys = [v[1] for v in verts]
+            if math.hypot(max(xs) - min(xs), max(ys) - min(ys)) > 4.0 * OPTICAL_GRID_MAX_SEC_R:
+                return False
+        centers = optical_grid_centers(
+            verts,
+            cell=OPTICAL_GRID_M,
+            max_cells=OPTICAL_GRID_MAX_CELLS if tight else Q4_OPTICAL_GRID_MAX_CELLS,
+        )
+        if not centers:
+            return False
+        if self.directional:
+            last = (self.book.detections.get(ch) or [None])[-1]
+            if last is None:
+                return False
+            centers = [
+                c
+                for c in centers
+                if front_compatible(last.xy, last.svd_deg, c)
+                and dist(c, (0.0, 0.0)) <= Q3_ARENA_R + 1e-6
+            ]
+            if not centers:
+                return False
+        self.optical_grid_calls += 1
+        self.optical_grid_cells += len(centers)
+        silence = self.book.silent_at.get(ch) or []
+        pos = self.bot.position
+        ordered = sorted(
+            centers,
+            key=lambda c: (
+                any(dist(c, s) < 8.0 for s in silence),
+                dist(c, pos),
+            ),
+        )
+        max_tries = OPTICAL_GRID_MAX_TRIES if tight else len(ordered)
+        abort_misses = OPTICAL_GRID_ABORT_MISSES if tight else len(ordered)
+        misses = 0
+        tries = 0
+        for c in ordered:
+            key = (ch, int(round(c[0])), int(round(c[1])))
+            if key in self._tried_clear:
+                continue
+            if tries >= max_tries:
+                break
+            if self._try_clear(c, ch, charge=False, source="optical_grid"):
+                self.optical_grid_hits += 1
+                return True
+            tries += 1
+            misses += 1
+            if misses >= abort_misses:
+                break
+        return False
+
+    def _take_second_fix(self, ch: int, s1: Point, th: float) -> None:
+        if self._q4_hexbatch and self.directional:
+            self._take_second_fix_hexbatch(ch, s1, th)
+            return
+        if not self.directional:
+            # Q3: Q2 next_stations primary, then legal recommend_second_options.
+            ordered = next_stations(
+                s1,
+                th,
+                now=self.bot.position,
+                directional=False,
+                silence=self.book.silent_at.get(ch),
+            )
+            for p in recommend_second_options(s1, th, now=self.bot.position):
+                if all(dist(p, q) > 5.0 for q in ordered):
+                    ordered.append(p)
+            if not ordered:
+                pref = recommend_second(s1, th, now=self.bot.position)
+                compact = list(recommend_second_sides_compact(s1, th))
+                ordered = [pref] + [p for p in compact if dist(p, pref) > 5.0]
+        else:
+            compact = list(recommend_second_sides_compact(s1, th))
+            compact.sort(key=lambda p: dist(p, self.bot.position))
+            extra = next_stations(
+                s1,
+                th,
+                now=self.bot.position,
+                directional=True,
+                silence=self.book.silent_at.get(ch),
+            )
+            ordered = compact
+            for p in extra:
+                if all(dist(p, q) > 5.0 for q in ordered):
+                    ordered.append(p)
+        for s2 in ordered:
+            if dist(s2, s1) <= 5.0:
+                continue
+            if self._measure_obs(ch, s2, self.book.detections.get(ch, [])):
+                return
+            if self._try_clear(s2, ch, source="second_station"):
+                return
+            if not self.directional:
+                return
+
+    def _take_second_fix_hexbatch(self, ch: int, s1: Point, th: float) -> None:
+        """One nearest front-lobe second station, then along-ray; never both sides."""
+        now = self.bot.position
+        silence = self.book.silent_at.get(ch)
+        ordered: list[Point] = []
+        if self._use_dir_corrector:
+            env = heard_region([s1], [th], delta_deg=self._aoa_delta_deg())
+            picked = next_station_dir(
+                s1,
+                th,
+                now=now,
+                region_vertices=None if env.empty else env.vertices,
+                silence=silence,
+            )
+            if picked is not None:
+                ordered.append(picked)
+        if not ordered:
+            compact = list(recommend_second_sides_compact(s1, th))
+            compact.sort(key=lambda p: dist(p, now))
+            for p in compact:
+                if dist(p, s1) <= 5.0:
+                    continue
+                if not front_compatible(s1, th, p):
+                    continue
+                if silence and any(dist(p, q) < 35.0 for q in silence):
+                    continue
+                ordered.append(p)
+                break
+        if not ordered:
+            extra = next_stations(
+                s1,
+                th,
+                now=now,
+                directional=True,
+                silence=silence,
+            )
+            for p in extra:
+                if dist(p, s1) > 5.0:
+                    ordered.append(p)
+                    break
+        along = self._along_bearing_proxy(s1, th, rho=450.0)
+        if dist(along, s1) > 80.0 and all(dist(along, q) > 40.0 for q in ordered):
+            ordered.append(along)
+        for s2 in ordered:
+            if ch in self.book.cleared:
+                return
+            before = len(self.book.detections.get(ch, []))
+            heard = self._measure_obs(ch, s2, self.book.detections.get(ch, []))
+            if ch in self.book.cleared or heard or len(self.book.detections.get(ch, [])) > before:
+                return
+            if dist(s2, s1) <= 40.0 and self._try_clear(s2, ch, source="second_station"):
+                return
 
     def _measure_obs(self, ch: int, xy: Point, obs: list) -> bool:
-        body = self.bot.measure(xy[0], xy[1], ch)
+        body = self._measure_action(xy, ch)
         if not _accepted(body):
             return False
         kind = body.get("measure_result")
         if kind == "near":
-            return self._try_clear(xy, ch)
+            return self._try_clear(xy, ch, source="near_pos")
         if kind == "direction":
-            self.book.add_direction(ch, xy, float(body["svd_deg"]))
+            self._record_direction(ch, xy, float(body["svd_deg"]))
             return True
+        self.book.record_silence(ch, xy)
+        near_last = bool(obs) and dist(xy, obs[-1].xy) <= 40.0
+        if obs and (near_last or not self._q4_hexbatch):
+            if self._try_clear(xy, ch, charge=False, behind_lobe=True, source="behind_lobe"):
+                return True
         return False
 
     def _creep_clear(self, ch: int, start: Point, th: float) -> bool:
+        if not self.directional:
+            if ch in self.creep_attempted:
+                return False
+            self.creep_attempted.add(ch)
+        self.creep_calls += 1
         heading = th
         p = start
         last_good = start
+        step = 180.0
         seen: set[tuple[int, int]] = set()
-        for _ in range(40):
+        n_steps = MAX_CREEP_STEPS_DIR if self.directional else 16
+        for _ in range(n_steps):
             if ch in self.book.cleared:
                 return True
-            nxt = add(p, scale(unit(heading), 12.0))
-            key = (round(nxt[0], 1), round(nxt[1], 1))
+            nxt = add(p, scale(unit(heading), step))
+            key = (round(nxt[0]), round(nxt[1]))
             if key in seen:
                 break
             seen.add(key)
-            body = self.bot.measure(nxt[0], nxt[1], ch)
+            self.creep_steps += 1
+            body = self._measure_action(nxt, ch)
             if not _accepted(body):
                 break
             kind = body.get("measure_result")
             if kind == "near":
-                return self._try_clear(nxt, ch)
+                return self._try_clear(nxt, ch, source="creep_near")
             if kind == "direction":
                 last_good = nxt
                 heading = float(body["svd_deg"])
                 p = nxt
-                self.book.add_direction(ch, nxt, heading)
+                self._record_direction(ch, nxt, heading)
+                if not self._q4_hexbatch and self._try_bearing_clears(ch, self.book.detections.get(ch, [])):
+                    return True
+                step = max(28.0, step * 0.65)
                 continue
-            back = add(nxt, scale(unit(heading), -16.0))
-            if self._try_clear(back, ch):
+            # no_signal: may be just behind a directional lobe but still <20 m
+            if self._try_clear(nxt, ch, charge=False, behind_lobe=True, source="creep_behind_lobe"):
                 return True
-            if self._try_clear(last_good, ch):
+            if step <= 80.0 and self._clear_budget_left(ch) >= 3 and self._probe_segment(ch, last_good, nxt, heading):
                 return True
-            closer = add(last_good, scale(unit(heading), 8.0))
-            return self._try_clear(closer, ch)
-        return self._try_clear(last_good, ch)
+            if self._try_clear(last_good, ch, source="creep_last"):
+                return True
+            closer = add(last_good, scale(unit(heading), 14.0))
+            if self._try_clear(closer, ch, source="creep_closer"):
+                return True
+            if step > 40.0:
+                step = 28.0
+                p = last_good
+                continue
+            return self._fan_clear(ch, last_good, heading)
+        return self._try_clear(last_good, ch, source="creep_last") or self._fan_clear(ch, last_good, heading)
+
+    def _probe_segment(self, ch: int, a: Point, b: Point, _heading: float) -> bool:
+        for t in (0.5, 0.25, 0.75):
+            p = _lerp(a, b, t)
+            if self._try_clear(p, ch, source="probe"):
+                return True
+            body = self._measure_action(p, ch)
+            if not _accepted(body):
+                continue
+            kind = body.get("measure_result")
+            if kind == "near":
+                return self._try_clear(p, ch, source="probe_near")
+            if kind == "direction":
+                self._record_direction(ch, p, float(body["svd_deg"]))
+                if self._try_clear(p, ch, source="probe_dir"):
+                    return True
+                along = add(p, scale(unit(float(body["svd_deg"])), 12.0))
+                if self._try_clear(along, ch, source="probe_along"):
+                    return True
+        return False
+
+    def _fan_clear(self, ch: int, xy: Point, heading: float) -> bool:
+        u = unit(heading)
+        n = (-u[1], u[0])
+        # Four nearby probes: along, back, left, right. Diagonals were mostly wasted misses.
+        dirs = (u, scale(u, -1.0), n, scale(n, -1.0))
+        for r in FAN_CLEAR_OFFSETS:
+            for v in dirs:
+                if self._try_clear(add(xy, scale(v, r)), ch, source="fan"):
+                    return True
+        return False
 
     def _home_and_clear(self, ch: int) -> None:
+        if ch in self.book.cleared or not self.book.detections.get(ch):
+            return
+        self._localize_and_clear(ch)
+        if ch in self.book.cleared:
+            return
         obs = self.book.detections.get(ch, [])
         if not obs:
             return
+        if self._try_bearing_clears(ch, obs):
+            return
         last = obs[-1]
-        self._creep_clear(ch, last.xy, last.svd_deg)
-        if ch not in self.book.cleared:
-            self._localize_and_clear(ch)
+        self._fan_clear(ch, last.xy, last.svd_deg)

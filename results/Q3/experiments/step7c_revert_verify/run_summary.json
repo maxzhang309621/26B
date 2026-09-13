@@ -1,0 +1,44 @@
+{
+  "question": "Q3",
+  "round": "step7c_revert_verify",
+  "approved_methods": [
+    "M2_triangulation_first",
+    "F1_bounded_creep"
+  ],
+  "role": "regression_verification",
+  "status": "PASS",
+  "inputs": {
+    "branch": "dev",
+    "head": "cf9159f4aadc0fec8e62b1ae4a6bebdd71c86335",
+    "policy": "Step 7 policy after reverting the Step 7b bearing feasibility gate",
+    "suite": "local_mock_full_disk_v1",
+    "seeds": "0..79",
+    "boundary_case": "16 sources at r=1799 m, r_eff=1000 m",
+    "paired_baseline": "results/Q3/experiments/step7_clear_audit/q12_80.json"
+  },
+  "outputs": [
+    "results/Q3/experiments/step7c_revert_verify/q12_80.json"
+  ],
+  "metric_summary": {
+    "fresh_closeout_unit_tests": "69/69 PASS",
+    "random_all_clear": "80/80",
+    "mean_virtual_time_s": 5156.596150225186,
+    "paired_case_count": 80,
+    "paired_key_field_mismatches": 0,
+    "max_abs_virtual_time_delta_s": 0.0,
+    "boundary_all_clear": "16/16",
+    "boundary_virtual_time_delta_s": 0.0,
+    "active_policy": "Step 7 baseline; bearing gate absent"
+  },
+  "seed": "0..79",
+  "environment": {
+    "os": "Windows",
+    "python": "3.12",
+    "formal_test": false
+  },
+  "warnings": [
+    "The 80-case result was produced before this closeout; this window independently compared it with the Step 7 baseline and ran the fresh 69-test suite.",
+    "Only local mock evidence; no official practice or formal test was run."
+  ],
+  "fallback_trigger_state": "not_triggered"
+}
