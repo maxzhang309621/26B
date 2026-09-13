@@ -44,21 +44,23 @@ BLACK       = "#222222"
 mpl.rcParams.update({
     "pdf.fonttype": 42,
     "svg.fonttype": "none",
-    "savefig.bbox": "tight",
+    "savefig.bbox": None,
     "savefig.dpi": 300,
 })
 
 mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial", "Helvetica"]
 mpl.rcParams["axes.unicode_minus"] = False
 
-OUT = Path(r"D:\maxzhang\python files\Math-modeling\26B\output\figures")
+OUT = Path(__file__).resolve().parent / "revised_assets"
 MM = 1 / 25.4
 BLUE, RED, GREEN, ORANGE, PURPLE, GREY6 = CATEGORICAL
 
 
 def save_cns_figure(fig, filename: Path) -> None:
-    fig.savefig(f"{filename}.pdf", bbox_inches="tight", dpi=300, facecolor="white")
-    fig.savefig(f"{filename}.png", bbox_inches="tight", dpi=300, facecolor="white")
+    # Keep the canvas ratio identical to its Word drawing box.  ``tight``
+    # crops each side differently and causes visible squashing on replacement.
+    fig.savefig(f"{filename}.pdf", bbox_inches=None, dpi=300, facecolor="white")
+    fig.savefig(f"{filename}.png", bbox_inches=None, dpi=600, facecolor="white")
 
 
 def fig_cost() -> None:
@@ -75,20 +77,23 @@ def fig_cost() -> None:
     ]
     assert abs(sum(p[1] for p in parts) - 100.01) < 0.1 or abs(sum(p[1] for p in parts) - 100) < 0.05
 
-    fig, axes = plt.subplots(1, 2, figsize=(170 * MM, 62 * MM), gridspec_kw={"width_ratios": [1.05, 1.15]})
+    # Match the original Word container exactly: 5.10 in x 2.54 in.
+    fig, axes = plt.subplots(1, 2, figsize=(5.10, 2.54), gridspec_kw={"width_ratios": [1.0, 1.05]})
 
     ax = axes[0]
     y = np.arange(len(rounds))
     colors = [GREY6, BLUE, GREEN]
     ax.barh(y, means, color=colors, height=0.62, zorder=2)
-    labels = ["8845 s", "6294 s（相对上阶段 −28.8%）", "5348 s（相对上阶段 −15.0%）"]
+    labels = ["8845 s", "6294 s  (−28.8%)", "5348 s  (−15.0%)"]
     for i, (v, lab) in enumerate(zip(means, labels)):
         ax.text(v + 90, i, lab, va="center", ha="left", fontsize=6.5, color=BLACK)
     ax.set_yticks(y, rounds)
     ax.invert_yaxis()
     ax.set_xlabel("本地 Mock 平均虚拟时间 (s)")
     ax.set_xlim(0, 14500)
-    ax.text(0.0, 1.08, "a  在线路线内部压缩", transform=ax.transAxes, fontsize=8, color=BLACK, fontweight="bold")
+    ax.text(0.0, 1.07, "a  在线路线内部压缩", transform=ax.transAxes, fontsize=8, color=BLACK, fontweight="bold")
+    ax.grid(axis="x", color="#E5E9EE", linewidth=0.45, zorder=0)
+    ax.set_axisbelow(True)
 
     ax = axes[1]
     left = 0.0
@@ -98,29 +103,30 @@ def fig_cost() -> None:
         if pct >= 10:
             ax.text(mid, 0.0, f"{pct:.1f}%", ha="center", va="center", fontsize=6.5, color="white")
         left += pct
-    ax.set_yticks([0], ["虚拟时间构成"])
+    ax.set_yticks([])
     ax.set_xlabel("占总虚拟时间的比例 (%)")
     ax.set_xlim(0, 100)
-    ax.set_ylim(-0.85, 1.35)
-    ax.text(0.0, 1.08, "b  后续严格基线账本（移动 85.9%）", transform=ax.transAxes, fontsize=8, color=BLACK, fontweight="bold")
-    # legend as a compact row under the bar
+    ax.set_ylim(-0.72, 0.88)
+    ax.text(0.0, 1.07, "b  后续严格基线账本（移动 85.9%）", transform=ax.transAxes, fontsize=8, color=BLACK, fontweight="bold")
     handles = [
         plt.Rectangle((0, 0), 1, 1, color=c, label=n) for n, _, c in parts
     ]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=5, fontsize=6.5, handlelength=0.9, columnspacing=0.8)
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.02),
+              ncol=3, fontsize=3.5, handlelength=0.7, columnspacing=0.42,
+              handletextpad=0.22, labelspacing=0.30)
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0)
     ax.annotate(
         "清除绕行最大",
         xy=(36.62 / 2, 0.22),
-        xytext=(18, 0.85),
+        xytext=(18, 0.60),
         fontsize=7,
         color=RED,
         ha="center",
         arrowprops=dict(arrowstyle="->", color=RED, lw=0.7),
     )
 
-    fig.subplots_adjust(wspace=0.28)
+    fig.subplots_adjust(wspace=0.40, bottom=0.20)
     save_cns_figure(fig, OUT / "q3_scan_clear_cost")
     plt.close(fig)
 
